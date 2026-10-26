@@ -1,0 +1,22 @@
+# Visual Studio
+.vs/
+*.user
+*.aps
+*.VC.db
+*.VC.opendb
+ipch/
+*.ipch
+
+# Build output
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww]in32/
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.log
+*.res
