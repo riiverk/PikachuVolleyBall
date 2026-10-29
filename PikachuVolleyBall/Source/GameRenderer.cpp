@@ -239,5 +239,6 @@ void RenderGameFrame(HWND hWnd)
 	DeleteDC(m1DC);
 	DeleteDC(m2DC);
 	DeleteDC(tempDC);
+	DeleteObject(tempBmp);
 	ReleaseDC(hWnd, hDC);
 }

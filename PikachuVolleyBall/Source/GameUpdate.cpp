@@ -6,7 +6,7 @@
 
 void ResetRoundIfNeeded()
 {
-	if (gameset_1 || gameset_2 && smaller > 12) {
+	if ((gameset_1 || gameset_2) && smaller > 12) {
 		if (gameset_1) {
 			ball.x = 120;
 			gameset_1 = false;
