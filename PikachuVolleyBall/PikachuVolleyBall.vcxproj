@@ -52,6 +52,10 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
+  <!-- Prefer the team's v145 toolset; use v143 only when v145 is unavailable. -->
+  <PropertyGroup Condition="'$(PlatformToolset)' == 'v145' and !Exists('$(VCTargetsPath)\Platforms\$(Platform)\PlatformToolsets\v145\Toolset.props') and Exists('$(VCTargetsPath)\Platforms\$(Platform)\PlatformToolsets\v143\Toolset.props')">
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
   </ImportGroup>
@@ -140,9 +144,26 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Source\main.cpp" />
+    <ClCompile Include="Source\GameState.cpp" />
+    <ClCompile Include="Source\PlayerMovement.cpp" />
+    <ClCompile Include="Source\BallPhysics.cpp" />
+    <ClCompile Include="Source\GameInput.cpp" />
+    <ClCompile Include="Source\PlayerAnimation.cpp" />
+    <ClCompile Include="Source\GameInitialization.cpp" />
+    <ClCompile Include="Source\GameUpdate.cpp" />
+    <ClCompile Include="Source\GameRenderer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\resource.h" />
+    <ClInclude Include="Source\GameTypes.h" />
+    <ClInclude Include="Source\GameState.h" />
+    <ClInclude Include="Source\PlayerMovement.h" />
+    <ClInclude Include="Source\BallPhysics.h" />
+    <ClInclude Include="Source\GameInput.h" />
+    <ClInclude Include="Source\PlayerAnimation.h" />
+    <ClInclude Include="Source\GameInitialization.h" />
+    <ClInclude Include="Source\GameUpdate.h" />
+    <ClInclude Include="Source\GameRenderer.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Source\Resource.rc" />
