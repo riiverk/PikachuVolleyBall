@@ -5,4 +5,5 @@
   </Configurations>
   <Project Path="Client/Client.vcxproj" />
   <Project Path="Server/Server.vcxproj" />
+  <Project Path="Tests/Tests.vcxproj" />
 </Solution>
