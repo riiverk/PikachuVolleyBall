@@ -154,6 +154,7 @@
     <ClCompile Include="Source\main.cpp" />
     <ClCompile Include="Source\PlayerAnimation.cpp" />
     <ClCompile Include="Source\PlayerMovement.cpp" />
+    <ClCompile Include="..\Common\Common.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\BallPhysics.h" />
@@ -166,6 +167,7 @@
     <ClInclude Include="Source\PlayerAnimation.h" />
     <ClInclude Include="Source\PlayerMovement.h" />
     <ClInclude Include="Source\resource.h" />
+    <ClInclude Include="..\Common\Common.h" />
     <ClInclude Include="..\Common\GameConst.h" />
   </ItemGroup>
   <ItemGroup>

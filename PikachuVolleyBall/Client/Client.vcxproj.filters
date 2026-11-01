@@ -34,6 +34,9 @@
     <ClCompile Include="Source\PlayerMovement.cpp">
       <Filter>Source</Filter>
     </ClCompile>
+    <ClCompile Include="..\Common\Common.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\BallPhysics.h">
@@ -64,6 +67,9 @@
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\resource.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\Common.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="..\Common\GameConst.h">

@@ -146,8 +146,10 @@
   </ImportGroup>
   <ItemGroup>
     <ClCompile Include="Source\main.cpp" />
+    <ClCompile Include="..\Common\Common.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\Common\Common.h" />
     <ClInclude Include="..\Common\GameConst.h" />
   </ItemGroup>
 </Project>
