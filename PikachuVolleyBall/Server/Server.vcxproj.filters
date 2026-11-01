@@ -7,6 +7,9 @@
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>
+    <ClCompile Include="Source\GameWorld.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
     <ClCompile Include="Source\main.cpp">
       <Filter>Source</Filter>
     </ClCompile>
@@ -15,6 +18,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Source\GameWorld.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
     <ClInclude Include="..\Common\Common.h">
       <Filter>Headers</Filter>
     </ClInclude>

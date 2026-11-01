@@ -145,10 +145,12 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
   <ItemGroup>
+    <ClCompile Include="Source\GameWorld.cpp" />
     <ClCompile Include="Source\main.cpp" />
     <ClCompile Include="..\Common\Common.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Source\GameWorld.h" />
     <ClInclude Include="..\Common\Common.h" />
     <ClInclude Include="..\Common\GameConst.h" />
     <ClInclude Include="..\Common\Protocol.h" />
