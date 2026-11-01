@@ -1,4 +1,4 @@
-﻿#include "GameInput.h"
+#include "GameInput.h"
 #include "GameState.h"
 #include <mmsystem.h>
 
@@ -14,7 +14,7 @@ void HandleKeyDown(HWND hWnd, WPARAM wParam)
 				mciSendString(L"play effect from 0", NULL, 0, NULL);
 				isUp = true;
 				velocityY_2 = jumpPower;
-				p2.jumpCnt = 60;
+				p2.jumpCnt = GameConst::JumpFrames;
 			}
 		}
 		else if (wParam == VK_LEFT)
@@ -36,29 +36,29 @@ void HandleKeyDown(HWND hWnd, WPARAM wParam)
 				PlaySound(TEXT("Resources\\sounds\\WAVE144_1.wav"), NULL, SND_SYNC);
 				mciSendString(L"open \"Resources\\sounds\\bgm.wav\" type mpegvideo alias bgm", NULL, 0, NULL);
 				mciSendString(L"play bgm repeat", NULL, 0, NULL);
-				ball.x = 980;
+				ball.x = GameConst::ServeX[1];
 				ready = true;
 				gameset_2 = true;
 				stage_1 = true;
 				mainScreen = false;
 				KillTimer(hWnd, MainScreen);
-				SetTimer(hWnd, 1, 16, NULL);
-				SetTimer(hWnd, Ready, 70, NULL);
-				SetTimer(hWnd, BallRotate, 100, NULL);
+				SetTimer(hWnd, GameConst::FrameTimerId, GameConst::TickMs, NULL);
+				SetTimer(hWnd, Ready, GameConst::ReadyTimerMs, NULL);
+				SetTimer(hWnd, BallRotate, GameConst::RotationTimerMs, NULL);
 			}
 			if (isLeft && !isSlide_Right_2 && !isUp)
 			{
 				isSlide_Left_2 = true;
 				isLeft = false;
 				isRight = false;
-				p2.slideCnt = 40;
+				p2.slideCnt = GameConst::SlideFrames;
 			}
 			else if (isRight && !isSlide_Left_2 && !isUp)
 			{
 				isSlide_Right_2 = true;
 				isLeft = false;
 				isRight = false;
-				p2.slideCnt = 40;
+				p2.slideCnt = GameConst::SlideFrames;
 			}
 			else if (isUp && !isSlide_Left_2 && !isSlide_Right_2 && !isEnter)
 			{
@@ -75,7 +75,7 @@ void HandleKeyDown(HWND hWnd, WPARAM wParam)
 				mciSendString(L"play effect from 0", NULL, 0, NULL);
 				isR = true;
 				velocityY_1 = jumpPower;
-				p1.jumpCnt = 60;
+				p1.jumpCnt = GameConst::JumpFrames;
 			}
 		}
 		else if (wParam == 'D')
@@ -102,23 +102,23 @@ void HandleKeyDown(HWND hWnd, WPARAM wParam)
 				mainScreen = false;
 				gameset_1 = true;
 				KillTimer(hWnd, MainScreen);
-				SetTimer(hWnd, 1, 16, NULL);
-				SetTimer(hWnd, Ready, 70, NULL);
-				SetTimer(hWnd, BallRotate, 100, NULL);
+				SetTimer(hWnd, GameConst::FrameTimerId, GameConst::TickMs, NULL);
+				SetTimer(hWnd, Ready, GameConst::ReadyTimerMs, NULL);
+				SetTimer(hWnd, BallRotate, GameConst::RotationTimerMs, NULL);
 			}
 			if (isD && !isSlide_Right_1 && !isR)
 			{
 				isSlide_Left_1 = true;
 				isD = false;
 				isG = false;
-				p1.slideCnt = 40;
+				p1.slideCnt = GameConst::SlideFrames;
 			}
 			else if (isG && !isSlide_Left_1 && !isR)
 			{
 				isSlide_Right_1 = true;
 				isD = false;
 				isG = false;
-				p1.slideCnt = 40;
+				p1.slideCnt = GameConst::SlideFrames;
 			}
 			if (isR && !isSlide_Left_1 && !isSlide_Right_1 && !isZ)
 			{
@@ -139,21 +139,21 @@ void HandleKeyDown(HWND hWnd, WPARAM wParam)
 			stage_2 = true;
 			p1.score = 0;
 			p2.score = 0;
-			readyCnt = 30;
-			p1.x = 30; p1.y = 560;
-			p2.x = 950; p2.y = 560;
+			readyCnt = GameConst::ReadyFrames;
+			p1.x = GameConst::PlayerStartX[0]; p1.y = GameConst::PlayerGroundY;
+			p2.x = GameConst::PlayerStartX[1]; p2.y = GameConst::PlayerGroundY;
 			winPlayer = 0;
 			if (wParam == VK_RETURN)
 			{
-				ball.x = 980; ball.y = 0;
+				ball.x = GameConst::ServeX[1]; ball.y = GameConst::ServeY;
 			}
 			else
 			{
-				ball.x = 120; ball.y = 0;
+				ball.x = GameConst::ServeX[0]; ball.y = GameConst::ServeY;
 			}
-			SetTimer(hWnd, 1, 16, NULL);
-			SetTimer(hWnd, Ready, 70, NULL);
-			SetTimer(hWnd, BallRotate, 100, NULL);
+			SetTimer(hWnd, GameConst::FrameTimerId, GameConst::TickMs, NULL);
+			SetTimer(hWnd, Ready, GameConst::ReadyTimerMs, NULL);
+			SetTimer(hWnd, BallRotate, GameConst::RotationTimerMs, NULL);
 			mciSendString(L"stop bgm", NULL, 0, NULL);
 			mciSendString(L"close bgm", NULL, 0, NULL);
 
@@ -174,21 +174,21 @@ void HandleKeyDown(HWND hWnd, WPARAM wParam)
 			stage_2 = false;
 			p1.score = 0;
 			p2.score = 0;
-			readyCnt = 30;
-			p1.x = 30; p1.y = 560;
-			p2.x = 950; p2.y = 560;
+			readyCnt = GameConst::ReadyFrames;
+			p1.x = GameConst::PlayerStartX[0]; p1.y = GameConst::PlayerGroundY;
+			p2.x = GameConst::PlayerStartX[1]; p2.y = GameConst::PlayerGroundY;
 			winPlayer = 0;
 			if (wParam == VK_RETURN)
 			{
-				ball.x = 980; ball.y = 0;
+				ball.x = GameConst::ServeX[1]; ball.y = GameConst::ServeY;
 			}
 			else
 			{
-				ball.x = 120; ball.y = 0;
+				ball.x = GameConst::ServeX[0]; ball.y = GameConst::ServeY;
 			}
-			KillTimer(hWnd, 1);
+			KillTimer(hWnd, GameConst::FrameTimerId);
 			KillTimer(hWnd, BallRotate);
-			SetTimer(hWnd, MainScreen, 16, NULL);
+			SetTimer(hWnd, MainScreen, GameConst::TickMs, NULL);
 			mciSendString(L"stop bgm", NULL, 0, NULL);
 			mciSendString(L"close bgm", NULL, 0, NULL);
 		}

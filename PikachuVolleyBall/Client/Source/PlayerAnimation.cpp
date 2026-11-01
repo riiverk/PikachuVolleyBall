@@ -1,4 +1,4 @@
-﻿#include "PlayerAnimation.h"
+#include "PlayerAnimation.h"
 #include "GameState.h"
 
 void UpdatePlayerAnimation()
@@ -225,8 +225,8 @@ void UpdatePlayerAnimation()
 	}
 	if (gameover_1 || gameover_2)
 	{
-		p1.x = 30; p1.y = 560;
-		p2.x = 950; p2.y = 560;
+		p1.x = GameConst::PlayerStartX[0]; p1.y = GameConst::PlayerGroundY;
+		p2.x = GameConst::PlayerStartX[1]; p2.y = GameConst::PlayerGroundY;
 
 		if (winPlayer == 1)
 		{

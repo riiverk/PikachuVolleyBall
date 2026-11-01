@@ -1,14 +1,15 @@
-﻿#pragma once
+#pragma once
 
 #include <windows.h>
 #include <tchar.h>
 #include <random>
 #include "GameTypes.h"
+#include "GameConst.h"
 
-#define BallRotate 1000
-#define MainScreen 3000
-#define GameOver 2000
-#define Ready 4000
+inline constexpr auto BallRotate = GameConst::BallRotateTimerId;
+inline constexpr auto MainScreen = GameConst::MainScreenTimerId;
+inline constexpr auto GameOver = GameConst::GameOverTimerId;
+inline constexpr auto Ready = GameConst::ReadyTimerId;
 
 extern bool isR;
 extern bool isD;

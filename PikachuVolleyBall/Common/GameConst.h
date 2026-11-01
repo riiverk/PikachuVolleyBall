@@ -1,0 +1,48 @@
+#pragma once
+#include <cstdint>
+
+// Logical coordinates preserve the original local game's rules and artwork.
+namespace GameConst
+{
+inline constexpr int WindowWidth = 1160;
+inline constexpr int WindowHeight = 830;
+inline constexpr int TickMs = 16;
+inline constexpr float TickSeconds = TickMs / 1000.0f;
+inline constexpr int PlayerCount = 2;
+inline constexpr int WinningScore = 5;
+inline constexpr int StageCount = 2;
+inline constexpr int PlayerStartX[PlayerCount] = {30, 950};
+inline constexpr int PlayerGroundY = 560;
+inline constexpr int PlayerMinX[PlayerCount] = {-15, 573};
+inline constexpr int PlayerMaxX[PlayerCount] = {385, 990};
+inline constexpr int MoveSpeed = 10;
+inline constexpr int AwakenedMoveSpeed = 15;
+inline constexpr int JumpGravity = 1;
+inline constexpr int JumpPower = -25;
+inline constexpr int SlideFrames = 40;
+inline constexpr int JumpFrames = 60;
+inline constexpr int ServeX[PlayerCount] = {120, 980};
+inline constexpr int ServeY = 0;
+inline constexpr float ServeVelocityY = 400.0f;
+inline constexpr int CourtLeft = 0;
+inline constexpr int CourtRight = 1150;
+inline constexpr int CourtBottom = 725;
+inline constexpr int CeilingY = -25;
+inline constexpr int NetLeft = 550;
+inline constexpr int NetRight = 575;
+inline constexpr int NetTop = 450;
+inline constexpr int BallCollisionSize = 90;
+inline constexpr float BallGravity = 1000.0f;
+inline constexpr float BallTimeScale = 2.3f;
+inline constexpr float HitForce = 1000.0f;
+inline constexpr float SpikeForce = 1600.0f;
+inline constexpr int ReadyFrames = 30;
+inline constexpr int ReadyTimerMs = 70;
+inline constexpr int RotationTimerMs = 100;
+inline constexpr int ResultTimerMs = 150;
+inline constexpr std::uintptr_t FrameTimerId = 1;
+inline constexpr std::uintptr_t BallRotateTimerId = 1000;
+inline constexpr std::uintptr_t GameOverTimerId = 2000;
+inline constexpr std::uintptr_t MainScreenTimerId = 3000;
+inline constexpr std::uintptr_t ReadyTimerId = 4000;
+}

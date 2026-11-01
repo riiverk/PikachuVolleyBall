@@ -38,7 +38,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 	WndClass.lpszClassName = lpszClass;
 	WndClass.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
 	RegisterClassEx(&WndClass);
-	hWnd = CreateWindow(lpszClass, lpszWindowName, WS_OVERLAPPEDWINDOW, 0, 0, 1160, 830, NULL, (HMENU)NULL, hInstance, NULL);
+	hWnd = CreateWindow(lpszClass, lpszWindowName, WS_OVERLAPPEDWINDOW, 0, 0, GameConst::WindowWidth, GameConst::WindowHeight, NULL, (HMENU)NULL, hInstance, NULL);
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
 	while (GetMessage(&Message, 0, 0, 0)) {
@@ -77,7 +77,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		case Ready:
 			RenderReadyScreen(hWnd);
 			break;
-		case 1:
+		case GameConst::FrameTimerId:
 			RenderGameFrame(hWnd);
 			break;
 		}
@@ -88,7 +88,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_DESTROY:
 		KillTimer(hWnd, 2);
-		KillTimer(hWnd, 1);
+		KillTimer(hWnd, GameConst::FrameTimerId);
 		KillTimer(hWnd, BallRotate);
 		PostQuitMessage(0);
 		return 0;

@@ -12,5 +12,8 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    </ItemGroup>
+    <ClInclude Include="..\Common\GameConst.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+  </ItemGroup>
 </Project>

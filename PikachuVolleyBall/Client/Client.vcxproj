@@ -166,6 +166,7 @@
     <ClInclude Include="Source\PlayerAnimation.h" />
     <ClInclude Include="Source\PlayerMovement.h" />
     <ClInclude Include="Source\resource.h" />
+    <ClInclude Include="..\Common\GameConst.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Source\Resource.rc" />

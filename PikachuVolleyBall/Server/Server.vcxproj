@@ -148,5 +148,6 @@
     <ClCompile Include="Source\main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    </ItemGroup>
+    <ClInclude Include="..\Common\GameConst.h" />
+  </ItemGroup>
 </Project>

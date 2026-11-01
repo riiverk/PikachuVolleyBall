@@ -1,4 +1,4 @@
-﻿#include "GameUpdate.h"
+#include "GameUpdate.h"
 #include "GameState.h"
 #include "PlayerMovement.h"
 #include "BallPhysics.h"
@@ -8,18 +8,18 @@ void ResetRoundIfNeeded()
 {
 	if ((gameset_1 || gameset_2) && smaller > 12) {
 		if (gameset_1) {
-			ball.x = 120;
+			ball.x = GameConst::ServeX[0];
 			gameset_1 = false;
 		}
 		if (gameset_2) {
-			ball.x = 980;
+			ball.x = GameConst::ServeX[1];
 			gameset_2 = false;
 		}
-		ball.y = 0;
+		ball.y = GameConst::ServeY;
 		ball.vx = 0;
-		ball.vy = 400;
-		p1.x = 30; p1.y = 560;
-		p2.x = 950; p2.y = 560;
+		ball.vy = GameConst::ServeVelocityY;
+		p1.x = GameConst::PlayerStartX[0]; p1.y = GameConst::PlayerGroundY;
+		p2.x = GameConst::PlayerStartX[1]; p2.y = GameConst::PlayerGroundY;
 		spike = false;
 	}
 }
@@ -48,18 +48,18 @@ void UpdateReadyState(HWND hWnd)
 	{
 		ready = false;
 		KillTimer(hWnd, Ready);
-		SetTimer(hWnd, 1, 16, NULL);
+		SetTimer(hWnd, GameConst::FrameTimerId, GameConst::TickMs, NULL);
 	}
 
-	p1.x = 30; p1.y = 560;
-	p2.x = 950; p2.y = 560;
+	p1.x = GameConst::PlayerStartX[0]; p1.y = GameConst::PlayerGroundY;
+	p2.x = GameConst::PlayerStartX[1]; p2.y = GameConst::PlayerGroundY;
 
 	readyCnt -= 1;
 }
 
 void UpdateGameFrame(HWND hWnd, HDC m1DC, HDC m2DC)
 {
-	if ((p1.score == 5 || p2.score == 5) && stage_1 && !gameover_1)
+	if ((p1.score == GameConst::WinningScore || p2.score == GameConst::WinningScore) && stage_1 && !gameover_1)
 	{
 		gameover_1 = true;
 		winPlayer = p1.score > p2.score ? 1 : 2;
@@ -67,12 +67,12 @@ void UpdateGameFrame(HWND hWnd, HDC m1DC, HDC m2DC)
 		else p1.evil = true;
 		p1.overCnt = 5;
 		p2.overCnt = 5;
-		KillTimer(hWnd, 1);
-		SetTimer(hWnd, 1, 150, NULL);
+		KillTimer(hWnd, GameConst::FrameTimerId);
+		SetTimer(hWnd, GameConst::FrameTimerId, GameConst::ResultTimerMs, NULL);
 		PlaySound(TEXT("Resources\\sounds\\WAVE143_1.wav"), NULL, SND_LOOP | SND_ASYNC);
 	}
 
-	if ((p1.score == 5 || p2.score == 5) && stage_2 && !gameover_2)
+	if ((p1.score == GameConst::WinningScore || p2.score == GameConst::WinningScore) && stage_2 && !gameover_2)
 	{
 		gameover_2 = true;
 		winPlayer = p1.score > p2.score ? 1 : 2;
@@ -80,12 +80,12 @@ void UpdateGameFrame(HWND hWnd, HDC m1DC, HDC m2DC)
 		else p1.evil = true;
 		p1.overCnt = 5;
 		p2.overCnt = 5;
-		KillTimer(hWnd, 1);
-		SetTimer(hWnd, 1, 150, NULL);
+		KillTimer(hWnd, GameConst::FrameTimerId);
+		SetTimer(hWnd, GameConst::FrameTimerId, GameConst::ResultTimerMs, NULL);
 		PlaySound(TEXT("Resources\\sounds\\WAVE143_1.wav"), NULL, SND_LOOP | SND_ASYNC);
 	}
 
-	if (ready) KillTimer(hWnd, 1);
+	if (ready) KillTimer(hWnd, GameConst::FrameTimerId);
 
 	if (isR || isUp) moveJump();
 	if (isD || isLeft) moveLeft();

@@ -1,4 +1,4 @@
-﻿#include "PlayerMovement.h"
+#include "PlayerMovement.h"
 #include "GameState.h"
 
 void moveJump()
@@ -8,9 +8,9 @@ void moveJump()
 		p1.y += velocityY_1;
 		velocityY_1 += gravity;
 
-		if (p1.y >= 560)  // 바닥 도착
+		if (p1.y >= GameConst::PlayerGroundY)  // 바닥 도착
 		{
-			p1.y = 560;
+			p1.y = GameConst::PlayerGroundY;
 			isR = false;
 			isZ = false;
 			velocityY_1 = 0;
@@ -22,9 +22,9 @@ void moveJump()
 		p2.y += velocityY_2;
 		velocityY_2 += gravity;
 
-		if (p2.y >= 560)  // 바닥 도착
+		if (p2.y >= GameConst::PlayerGroundY)  // 바닥 도착
 		{
-			p2.y = 560;
+			p2.y = GameConst::PlayerGroundY;
 			isUp = false;
 			isEnter = false;
 			velocityY_2 = 0;
@@ -57,7 +57,7 @@ void moveSlide()
 					p1.x -= 7;
 			}
 		}
-		else p1.y = 560;
+		else p1.y = GameConst::PlayerGroundY;
 	}
 	if (isSlide_Left_2)
 	{
@@ -81,7 +81,7 @@ void moveSlide()
 					p2.x -= 7;
 			}
 		}
-		else p2.y = 560;
+		else p2.y = GameConst::PlayerGroundY;
 	}
 	if (isSlide_Right_1)
 	{
@@ -105,7 +105,7 @@ void moveSlide()
 					p1.x += 7;
 			}
 		}
-		else p1.y = 560;
+		else p1.y = GameConst::PlayerGroundY;
 	}
 	if (isSlide_Right_2)
 	{
@@ -129,42 +129,42 @@ void moveSlide()
 					p2.x += 7;
 			}
 		}
-		else p2.y = 560;
+		else p2.y = GameConst::PlayerGroundY;
 	}
 }
 
 void moveLeft()
 {
-	if (isD && p1.x > -15)
+	if (isD && p1.x > GameConst::PlayerMinX[0])
 	{
 		if (!p1.evil)
-			p1.x -= 10;
+			p1.x -= GameConst::MoveSpeed;
 		else
-			p1.x -= 15;
+			p1.x -= GameConst::AwakenedMoveSpeed;
 	}
-	if (isLeft && p2.x > 573)
+	if (isLeft && p2.x > GameConst::PlayerMinX[1])
 	{
 		if (!p2.evil)
-			p2.x -= 10;
+			p2.x -= GameConst::MoveSpeed;
 		else
-			p2.x -= 15;
+			p2.x -= GameConst::AwakenedMoveSpeed;
 	}
 }
 
 void moveRight()
 {
-	if (isG && p1.x < 385)
+	if (isG && p1.x < GameConst::PlayerMaxX[0])
 	{
 		if (!p1.evil)
-			p1.x += 10;
+			p1.x += GameConst::MoveSpeed;
 		else
-			p1.x += 15;
+			p1.x += GameConst::AwakenedMoveSpeed;
 	}
-	if (isRight && p2.x < 990)
+	if (isRight && p2.x < GameConst::PlayerMaxX[1])
 	{
 		if (!p2.evil)
-			p2.x += 10;
+			p2.x += GameConst::MoveSpeed;
 		else
-			p2.x += 15;
+			p2.x += GameConst::AwakenedMoveSpeed;
 	}
 }

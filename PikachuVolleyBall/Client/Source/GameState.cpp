@@ -1,4 +1,4 @@
-﻿#include "GameState.h"
+#include "GameState.h"
 
 using namespace std;
 
@@ -24,8 +24,8 @@ bool keyGDown = false;
 
 int velocityY_1 = 0;
 int velocityY_2 = 0;
-const int gravity = 1;
-const int jumpPower = -25;
+const int gravity = GameConst::JumpGravity;
+const int jumpPower = GameConst::JumpPower;
 
 bool mainScreen = true;
 bool stage_1 = false;
@@ -38,7 +38,7 @@ bool gameover_2 = false;
 int cnt = 0, prev_loc[9][2];
 RECT rt;
 //float g = 60.0f;
-float tick = 0.016f;
+float tick = GameConst::TickSeconds;
 bool spike = false;
 bool gameset_1 = false, gameset_2 = false;
 float center, prev_vy, prev_vx;
@@ -76,7 +76,7 @@ int fSize = 250;
 int fDir = -1;
 int wfX = 450;
 int wfDir = -1;
-int readyCnt = 30;
+int readyCnt = GameConst::ReadyFrames;
 
 int winPlayer = 0;
 

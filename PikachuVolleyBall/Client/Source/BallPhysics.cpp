@@ -7,21 +7,21 @@
 using namespace std;
 
 void BallMove_1() {
-	int bottom = 725, left = 0, right = 1150;
-	const float gravity = 1000.0f;
-	float p_Force = 1000.0f;
-	float s_Force = 1600.0f;
+	const int bottom = GameConst::CourtBottom, left = GameConst::CourtLeft, right = GameConst::CourtRight;
+	const float gravity = GameConst::BallGravity;
+	const float p_Force = GameConst::HitForce;
+	const float s_Force = GameConst::SpikeForce;
 	static float spike_vx = 0, spike_vy = 0;
 	static bool hit_top = false;
 	bool hit_p1 = false, hit_p2 = false, hit_net = false;
 	RECT p1_rect = { p1.x + 30, p1.y, p1.x + 140, p1.y + 40 };
 	RECT p2_rect = { p2.x + 30, p2.y, p2.x + 140, p2.y + 40 };
 	RECT ball_rect = { (int)ball.x, (int)ball.y, (int)ball.x + 100, (int)ball.y + 100 };
-	RECT net_rect = { 550, 450, 575, 725 };
+	RECT net_rect = { GameConst::NetLeft, GameConst::NetTop, GameConst::NetRight, GameConst::CourtBottom };
 
-	if (ball_rect.top <= -25) {
+	if (ball_rect.top <= GameConst::CeilingY) {
 		if (!hit_top) {
-			ball.y = -25;
+			ball.y = GameConst::CeilingY;
 			ball.vy = abs(ball.vy);
 			hit_top = true;
 		}
@@ -30,25 +30,25 @@ void BallMove_1() {
 		hit_top = false;
 
 	ball.vy += gravity * tick;
-	ball.x += ball.vx * tick * 2.3f;
-	ball.y += ball.vy * tick * 2.3f;
+	ball.x += ball.vx * tick * GameConst::BallTimeScale;
+	ball.y += ball.vy * tick * GameConst::BallTimeScale;
 
 	ball_rect.left = (int)ball.x + 10;
 	ball_rect.top = (int)ball.y + 10;
 	ball_rect.right = (int)ball.x + 90;
 	ball_rect.bottom = (int)ball.y + 90;
 
-	if (ball.y >= bottom - 90) {
+	if (ball.y >= bottom - GameConst::BallCollisionSize) {
 		smaller = 0;
-		ball.y = bottom - 90;
+		ball.y = bottom - GameConst::BallCollisionSize;
 		ball.vy = -ball.vy * 0.9f;
-		if (ball.x < 550) {
+		if (ball.x < GameConst::NetLeft) {
 			++p2.score;
 			PlaySound(TEXT("Resources\\sounds\\WAVE146_1.wav"), NULL, SND_SYNC);
 			gameset_2 = true;
 			cnt = 0;
 		}
-		else if (ball.x > 575) {
+		else if (ball.x > GameConst::NetRight) {
 			++p1.score;
 			PlaySound(TEXT("Resources\\sounds\\WAVE146_1.wav"), NULL, SND_SYNC);
 			gameset_1 = true;
@@ -65,14 +65,14 @@ void BallMove_1() {
 		ball.x = left;
 		ball.vx = -ball.vx * 0.9f;
 	}
-	else if (ball.x + 90 >= right) {
-		ball.x = right - 90;
+	else if (ball.x + GameConst::BallCollisionSize >= right) {
+		ball.x = right - GameConst::BallCollisionSize;
 		ball.vx = -ball.vx * 0.9f;
 	}
 
 	if (ball_rect.right > net_rect.left && ball_rect.left < net_rect.right &&
 		ball_rect.bottom > net_rect.top && ball_rect.top < net_rect.bottom) {
-		if (ball.x < 550)
+		if (ball.x < GameConst::NetLeft)
 			ball.x = 460;
 		else
 			ball.x = 565;
@@ -94,13 +94,13 @@ void BallMove_1() {
 		}
 		if (isZ) {
 			spike = true;
-			if (ball.x < 550)
+			if (ball.x < GameConst::NetLeft)
 				ball.vx = s_Force * 0.45f;
 			else
 				ball.vx = -s_Force * 0.45f;
 		}
 		else {
-			if (ball.x < 550)
+			if (ball.x < GameConst::NetLeft)
 				ball.vx = p_Force * 0.45f;
 			else
 				ball.vx = -p_Force * 0.45f;
@@ -124,13 +124,13 @@ void BallMove_1() {
 		}
 		if (isEnter) {
 			spike = true;
-			if (ball.x < 550)
+			if (ball.x < GameConst::NetLeft)
 				ball.vx = s_Force * 0.45f;
 			else
 				ball.vx = -s_Force * 0.45f;
 		}
 		else {
-			if (ball.x < 550)
+			if (ball.x < GameConst::NetLeft)
 				ball.vx = p_Force * 0.45f;
 			else
 				ball.vx = -p_Force * 0.45f;
@@ -145,21 +145,21 @@ void BallMove_1() {
 }
 
 void BallMove_2() {
-	int bottom = 725, left = 0, right = 1150;
-	const float gravity = 1000.0f;
-	float p_Force = 1000.0f;
-	float s_Force = 1600.0f;
+	const int bottom = GameConst::CourtBottom, left = GameConst::CourtLeft, right = GameConst::CourtRight;
+	const float gravity = GameConst::BallGravity;
+	const float p_Force = GameConst::HitForce;
+	const float s_Force = GameConst::SpikeForce;
 	static float spike_vx = 0, spike_vy = 0;
 	static bool hit_top = false;
 	bool hit_p1 = false, hit_p2 = false, hit_net = false;
 	RECT p1_rect = { p1.x + 30, p1.y, p1.x + 140, p1.y + 40 };
 	RECT p2_rect = { p2.x + 30, p2.y, p2.x + 140, p2.y + 40 };
 	RECT ball_rect = { (int)ball.x, (int)ball.y, (int)ball.x + 100, (int)ball.y + 100 };
-	RECT net_rect = { 550, 450, 575, 725 };
+	RECT net_rect = { GameConst::NetLeft, GameConst::NetTop, GameConst::NetRight, GameConst::CourtBottom };
 
-	if (ball_rect.top <= -25) {
+	if (ball_rect.top <= GameConst::CeilingY) {
 		if (!hit_top) {
-			ball.y = -25;
+			ball.y = GameConst::CeilingY;
 			ball.vy = abs(ball.vy);
 			hit_top = true;
 		}
@@ -168,25 +168,25 @@ void BallMove_2() {
 		hit_top = false;
 
 	ball.vy += gravity * tick;
-	ball.x += ball.vx * tick * 2.3f;
-	ball.y += ball.vy * tick * 2.3f;
+	ball.x += ball.vx * tick * GameConst::BallTimeScale;
+	ball.y += ball.vy * tick * GameConst::BallTimeScale;
 
 	ball_rect.left = (int)ball.x + 10;
 	ball_rect.top = (int)ball.y + 10;
 	ball_rect.right = (int)ball.x + 90;
 	ball_rect.bottom = (int)ball.y + 90;
 
-	if (ball.y >= bottom - 90) {
+	if (ball.y >= bottom - GameConst::BallCollisionSize) {
 		smaller = 0;
-		ball.y = bottom - 90;
+		ball.y = bottom - GameConst::BallCollisionSize;
 		ball.vy = -ball.vy * 0.9f;
-		if (ball.x < 550) {
+		if (ball.x < GameConst::NetLeft) {
 			++p2.score;
 			PlaySound(TEXT("Resources\\sounds\\WAVE146_1.wav"), NULL, SND_SYNC);
 			gameset_2 = true;
 			cnt = 0;
 		}
-		else if (ball.x > 575) {
+		else if (ball.x > GameConst::NetRight) {
 			++p1.score;
 			PlaySound(TEXT("Resources\\sounds\\WAVE146_1.wav"), NULL, SND_SYNC);
 			gameset_1 = true;
@@ -203,14 +203,14 @@ void BallMove_2() {
 		ball.x = left;
 		ball.vx = -ball.vx * 0.9f;
 	}
-	else if (ball.x + 90 >= right) {
-		ball.x = right - 90;
+	else if (ball.x + GameConst::BallCollisionSize >= right) {
+		ball.x = right - GameConst::BallCollisionSize;
 		ball.vx = -ball.vx * 0.9f;
 	}
 
 	if (ball_rect.right > net_rect.left && ball_rect.left < net_rect.right &&
 		ball_rect.bottom > net_rect.top && ball_rect.top < net_rect.bottom) {
-		if (ball.x < 550)
+		if (ball.x < GameConst::NetLeft)
 			ball.x = 460;
 		else
 			ball.x = 565;
@@ -234,13 +234,13 @@ void BallMove_2() {
 			}
 			if (isZ) {
 				spike = true;
-				if (ball.x < 550)
+				if (ball.x < GameConst::NetLeft)
 					ball.vx = s_Force * 0.45f;
 				else
 					ball.vx = -s_Force * 0.45f;
 			}
 			else {
-				if (ball.x < 550)
+				if (ball.x < GameConst::NetLeft)
 					ball.vx = p_Force * 0.45f;
 				else
 					ball.vx = -p_Force * 0.45f;
@@ -263,13 +263,13 @@ void BallMove_2() {
 				}
 				if (isZ) {
 					spike = true;
-					if (ball.x < 550)
+					if (ball.x < GameConst::NetLeft)
 						ball.vx = s_Force * 0.7f;
 					else
 						ball.vx = -s_Force * 0.7f;
 				}
 				else {
-					if (ball.x < 550)
+					if (ball.x < GameConst::NetLeft)
 						ball.vx = p_Force * 0.6f;
 					else
 						ball.vx = -p_Force * 0.6f;
@@ -296,13 +296,13 @@ void BallMove_2() {
 			}
 			if (isEnter) {
 				spike = true;
-				if (ball.x < 550)
+				if (ball.x < GameConst::NetLeft)
 					ball.vx = s_Force * 0.45f;
 				else
 					ball.vx = -s_Force * 0.45f;
 			}
 			else {
-				if (ball.x < 550)
+				if (ball.x < GameConst::NetLeft)
 					ball.vx = p_Force * 0.45f;
 				else
 					ball.vx = -p_Force * 0.45f;
@@ -326,13 +326,13 @@ void BallMove_2() {
 				}
 				if (isEnter) {
 					spike = true;
-					if (ball.x < 550)
+					if (ball.x < GameConst::NetLeft)
 						ball.vx = s_Force * 0.7f;
 					else
 						ball.vx = -s_Force * 0.7f;
 				}
 				else {
-					if (ball.x < 550)
+					if (ball.x < GameConst::NetLeft)
 						ball.vx = p_Force * 0.6f;
 					else
 						ball.vx = -p_Force * 0.6f;

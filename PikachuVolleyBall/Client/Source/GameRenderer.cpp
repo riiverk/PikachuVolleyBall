@@ -1,4 +1,4 @@
-﻿#include "GameRenderer.h"
+#include "GameRenderer.h"
 #include "GameState.h"
 #include "GameInitialization.h"
 #include "GameUpdate.h"
@@ -30,7 +30,7 @@ void InitializeGame(HWND hWnd)
 	DeleteDC(m1DC);
 	DeleteDC(m2DC);
 	ReleaseDC(hWnd, hDC);
-	SetTimer(hWnd, MainScreen, 16, NULL);
+	SetTimer(hWnd, MainScreen, GameConst::TickMs, NULL);
 }
 
 void PaintScores(HWND hWnd)

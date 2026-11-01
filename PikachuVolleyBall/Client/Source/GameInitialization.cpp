@@ -1,4 +1,4 @@
-﻿#include "GameInitialization.h"
+#include "GameInitialization.h"
 #include "GameState.h"
 
 void InitializeGameState(HWND hWnd)
@@ -16,13 +16,13 @@ void InitializeGameState(HWND hWnd)
 	net_Top.Sx = 22; net_Top.Sy = 2; net_Top.w = 8; net_Top.h = 8;
 	p1.Sx = 134; p1.Sy = 266; p1.w = 62; p1.h = 64;
 	p2.Sx = 134; p2.Sy = 266; p2.w = 62; p2.h = 64;
-	p1.x = 30; p1.y = 560;
-	p2.x = 950; p2.y = 560;
+	p1.x = GameConst::PlayerStartX[0]; p1.y = GameConst::PlayerGroundY;
+	p2.x = GameConst::PlayerStartX[1]; p2.y = GameConst::PlayerGroundY;
 	p1.moveCnt = 2; p2.moveCnt = 2;
 	p1.score = 0;
 	p2.score = 0;
 	ball.Sx = 88; ball.Sy = 158; ball.w = 40; ball.h = 40;
-	ball.x = 120; ball.y = 0; ball.vx = 0; ball.vy = 400;
+	ball.x = GameConst::ServeX[0]; ball.y = GameConst::ServeY; ball.vx = 0; ball.vy = GameConst::ServeVelocityY;
 	fight.Sx = 254; fight.Sy = 723; fight.w = 160; fight.h = 160;
 	logo.Sx = 2; logo.Sy = 611; logo.w = 276; logo.h = 79;
 	pokemon.Sx = 2; pokemon.Sy = 124; pokemon.w = 200; pokemon.h = 32;
