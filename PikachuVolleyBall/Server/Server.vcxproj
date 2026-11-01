@@ -145,12 +145,20 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
   <ItemGroup>
+    <ClCompile Include="Source\ClientSession.cpp" />
     <ClCompile Include="Source\GameWorld.cpp" />
     <ClCompile Include="Source\main.cpp" />
+    <ClCompile Include="Source\Room.cpp" />
+    <ClCompile Include="Source\RoomManager.cpp" />
+    <ClCompile Include="Source\Server.cpp" />
     <ClCompile Include="..\Common\Common.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Source\ClientSession.h" />
     <ClInclude Include="Source\GameWorld.h" />
+    <ClInclude Include="Source\Room.h" />
+    <ClInclude Include="Source\RoomManager.h" />
+    <ClInclude Include="Source\Server.h" />
     <ClInclude Include="..\Common\Common.h" />
     <ClInclude Include="..\Common\GameConst.h" />
     <ClInclude Include="..\Common\Protocol.h" />

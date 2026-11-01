@@ -7,10 +7,22 @@
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>
+    <ClCompile Include="Source\ClientSession.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
     <ClCompile Include="Source\GameWorld.cpp">
       <Filter>Source</Filter>
     </ClCompile>
     <ClCompile Include="Source\main.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Room.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\RoomManager.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Server.cpp">
       <Filter>Source</Filter>
     </ClCompile>
     <ClCompile Include="..\Common\Common.cpp">
@@ -18,7 +30,19 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Source\ClientSession.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
     <ClInclude Include="Source\GameWorld.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Room.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\RoomManager.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Server.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="..\Common\Common.h">
