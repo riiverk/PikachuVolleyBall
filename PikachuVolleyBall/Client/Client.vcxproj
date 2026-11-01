@@ -146,26 +146,34 @@
   </ImportGroup>
   <ItemGroup>
     <ClCompile Include="Source\BallPhysics.cpp" />
+    <ClCompile Include="Source\GameClient.cpp" />
     <ClCompile Include="Source\GameInitialization.cpp" />
     <ClCompile Include="Source\GameInput.cpp" />
     <ClCompile Include="Source\GameRenderer.cpp" />
     <ClCompile Include="Source\GameState.cpp" />
     <ClCompile Include="Source\GameUpdate.cpp" />
+    <ClCompile Include="Source\InputManager.cpp" />
     <ClCompile Include="Source\main.cpp" />
+    <ClCompile Include="Source\NetworkClient.cpp" />
     <ClCompile Include="Source\PlayerAnimation.cpp" />
     <ClCompile Include="Source\PlayerMovement.cpp" />
+    <ClCompile Include="Source\Renderer.cpp" />
     <ClCompile Include="..\Common\Common.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\BallPhysics.h" />
+    <ClInclude Include="Source\GameClient.h" />
     <ClInclude Include="Source\GameInitialization.h" />
     <ClInclude Include="Source\GameInput.h" />
     <ClInclude Include="Source\GameRenderer.h" />
     <ClInclude Include="Source\GameState.h" />
     <ClInclude Include="Source\GameTypes.h" />
     <ClInclude Include="Source\GameUpdate.h" />
+    <ClInclude Include="Source\InputManager.h" />
+    <ClInclude Include="Source\NetworkClient.h" />
     <ClInclude Include="Source\PlayerAnimation.h" />
     <ClInclude Include="Source\PlayerMovement.h" />
+    <ClInclude Include="Source\Renderer.h" />
     <ClInclude Include="Source\resource.h" />
     <ClInclude Include="..\Common\Common.h" />
     <ClInclude Include="..\Common\GameConst.h" />

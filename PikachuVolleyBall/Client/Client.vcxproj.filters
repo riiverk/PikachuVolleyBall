@@ -10,6 +10,9 @@
     <ClCompile Include="Source\BallPhysics.cpp">
       <Filter>Source</Filter>
     </ClCompile>
+    <ClCompile Include="Source\GameClient.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
     <ClCompile Include="Source\GameInitialization.cpp">
       <Filter>Source</Filter>
     </ClCompile>
@@ -25,7 +28,13 @@
     <ClCompile Include="Source\GameUpdate.cpp">
       <Filter>Source</Filter>
     </ClCompile>
+    <ClCompile Include="Source\InputManager.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
     <ClCompile Include="Source\main.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\NetworkClient.cpp">
       <Filter>Source</Filter>
     </ClCompile>
     <ClCompile Include="Source\PlayerAnimation.cpp">
@@ -34,12 +43,18 @@
     <ClCompile Include="Source\PlayerMovement.cpp">
       <Filter>Source</Filter>
     </ClCompile>
+    <ClCompile Include="Source\Renderer.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
     <ClCompile Include="..\Common\Common.cpp">
       <Filter>Source</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\BallPhysics.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\GameClient.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\GameInitialization.h">
@@ -60,10 +75,19 @@
     <ClInclude Include="Source\GameUpdate.h">
       <Filter>Headers</Filter>
     </ClInclude>
+    <ClInclude Include="Source\InputManager.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\NetworkClient.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
     <ClInclude Include="Source\PlayerAnimation.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\PlayerMovement.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\Renderer.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\resource.h">
