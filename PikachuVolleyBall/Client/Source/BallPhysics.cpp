@@ -1,5 +1,6 @@
-﻿#include "BallPhysics.h"
+#include "BallPhysics.h"
 #include "GameState.h"
+#include <mmsystem.h>
 #include <iostream>
 #include <cmath>
 

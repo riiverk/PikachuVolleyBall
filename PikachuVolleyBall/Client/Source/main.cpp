@@ -1,8 +1,9 @@
-﻿#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
 #include "GameState.h"
 #include "GameInput.h"
 #include "GameUpdate.h"
 #include "GameRenderer.h"
+#include <filesystem>
 
 #pragma comment(lib, "msimg32.lib")
 #pragma comment(lib, "winmm.lib")
@@ -10,6 +11,16 @@
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam);
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdParam, int nCmdShow)
 {
+	// Resources are copied next to Client.exe; launching from another working
+	// directory (Explorer, Visual Studio, or a terminal) must still find audio.
+	wchar_t executablePath[32768]{};
+	const DWORD pathLength = GetModuleFileNameW(nullptr, executablePath, ARRAYSIZE(executablePath));
+	if (pathLength == 0 || pathLength >= ARRAYSIZE(executablePath) ||
+		!SetCurrentDirectoryW(std::filesystem::path(executablePath).parent_path().c_str()))
+	{
+		MessageBoxW(nullptr, L"Cannot locate the game resource directory.", L"PikachuVolleyBall", MB_OK | MB_ICONERROR);
+		return 1;
+	}
 	HWND hWnd;
 	MSG Message;
 	WNDCLASSEX WndClass;

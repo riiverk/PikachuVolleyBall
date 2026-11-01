@@ -1,5 +1,5 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<?xml version='1.0' encoding='utf-8'?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -21,8 +21,8 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{ea84bd22-484d-4eca-a627-584b8936b51c}</ProjectGuid>
-    <RootNamespace>PikachuVolleyBall</RootNamespace>
+    <ProjectGuid>{EA84BD22-484D-4ECA-A627-584B8936B51C}</ProjectGuid>
+    <RootNamespace>Client</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -52,7 +52,6 @@
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
-  <!-- Prefer the team's v145 toolset; use v143 only when v145 is unavailable. -->
   <PropertyGroup Condition="'$(PlatformToolset)' == 'v145' and !Exists('$(VCTargetsPath)\Platforms\$(Platform)\PlatformToolsets\v145\Toolset.props') and Exists('$(VCTargetsPath)\Platforms\$(Platform)\PlatformToolsets\v143\Toolset.props')">
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
@@ -142,33 +141,42 @@
       <EnableSegmentHeap>true</EnableSegmentHeap>
     </Manifest>
   </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
   <ItemGroup>
-    <ClCompile Include="Source\main.cpp" />
-    <ClCompile Include="Source\GameState.cpp" />
-    <ClCompile Include="Source\PlayerMovement.cpp" />
     <ClCompile Include="Source\BallPhysics.cpp" />
-    <ClCompile Include="Source\GameInput.cpp" />
-    <ClCompile Include="Source\PlayerAnimation.cpp" />
     <ClCompile Include="Source\GameInitialization.cpp" />
-    <ClCompile Include="Source\GameUpdate.cpp" />
+    <ClCompile Include="Source\GameInput.cpp" />
     <ClCompile Include="Source\GameRenderer.cpp" />
+    <ClCompile Include="Source\GameState.cpp" />
+    <ClCompile Include="Source\GameUpdate.cpp" />
+    <ClCompile Include="Source\main.cpp" />
+    <ClCompile Include="Source\PlayerAnimation.cpp" />
+    <ClCompile Include="Source\PlayerMovement.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Source\resource.h" />
-    <ClInclude Include="Source\GameTypes.h" />
-    <ClInclude Include="Source\GameState.h" />
-    <ClInclude Include="Source\PlayerMovement.h" />
     <ClInclude Include="Source\BallPhysics.h" />
-    <ClInclude Include="Source\GameInput.h" />
-    <ClInclude Include="Source\PlayerAnimation.h" />
     <ClInclude Include="Source\GameInitialization.h" />
-    <ClInclude Include="Source\GameUpdate.h" />
+    <ClInclude Include="Source\GameInput.h" />
     <ClInclude Include="Source\GameRenderer.h" />
+    <ClInclude Include="Source\GameState.h" />
+    <ClInclude Include="Source\GameTypes.h" />
+    <ClInclude Include="Source\GameUpdate.h" />
+    <ClInclude Include="Source\PlayerAnimation.h" />
+    <ClInclude Include="Source\PlayerMovement.h" />
+    <ClInclude Include="Source\resource.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Source\Resource.rc" />
   </ItemGroup>
-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
+  <PropertyGroup>
+    <LocalDebuggerWorkingDirectory>$(OutDir)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
+  <Target Name="CopyGameResources" AfterTargets="Build">
+    <ItemGroup>
+      <GameResource Include="$(ProjectDir)Resources\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GameResource)" DestinationFiles="@(GameResource-&gt;'$(OutDir)Resources\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

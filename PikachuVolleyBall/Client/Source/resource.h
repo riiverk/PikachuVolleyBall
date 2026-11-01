@@ -1,12 +1,12 @@
-//{{NO_DEPENDENCIES}}
-// Microsoft Visual C++¿¡¼­ »ý¼ºÇÑ Æ÷ÇÔ ÆÄÀÏÀÔ´Ï´Ù.
-// Resource.rc¿¡¼­ »ç¿ëµÇ°í ÀÖ½À´Ï´Ù.
+ï»¿//{{NO_DEPENDENCIES}}
+// Microsoft Visual C++ì—ì„œ ìƒì„±í•œ í¬í•¨ íŒŒì¼ìž…ë‹ˆë‹¤.
+// Resource.rcì—ì„œ ì‚¬ìš©ë˜ê³  ìžˆìŠµë‹ˆë‹¤.
 //
 #define IDB_BITMAP1                     101
 #define IDB_BITMAP2                     103
 
 // Next default values for new objects
-// 
+//
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        104

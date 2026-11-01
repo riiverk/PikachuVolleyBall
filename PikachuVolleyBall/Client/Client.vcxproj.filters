@@ -1,0 +1,75 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <ItemGroup>
+    <Filter Include="Source" />
+    <Filter Include="Headers" />
+    <Filter Include="Resources" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ClCompile Include="Source\BallPhysics.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\GameInitialization.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\GameInput.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\GameRenderer.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\GameState.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\GameUpdate.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\main.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\PlayerAnimation.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\PlayerMovement.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\BallPhysics.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\GameInitialization.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\GameInput.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\GameRenderer.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\GameState.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\GameTypes.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\GameUpdate.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\PlayerAnimation.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\PlayerMovement.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\resource.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Source\Resource.rc">
+      <Filter>Resources</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+</Project>

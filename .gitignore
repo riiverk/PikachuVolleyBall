@@ -20,3 +20,7 @@ x86/
 *.tlog
 *.log
 *.res
+
+# Shared multi-project build directories
+bin/
+obj/
