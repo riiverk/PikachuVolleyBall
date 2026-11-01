@@ -151,5 +151,6 @@
   <ItemGroup>
     <ClInclude Include="..\Common\Common.h" />
     <ClInclude Include="..\Common\GameConst.h" />
+    <ClInclude Include="..\Common\Protocol.h" />
   </ItemGroup>
 </Project>

@@ -9,6 +9,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include "GameConst.h"
+#include "Protocol.h"
 
 // Blocking socket only. Returns len on success, a SHORT count on graceful EOF,
 // or SOCKET_ERROR (inspect WSAGetLastError). A packet reader must reject short
