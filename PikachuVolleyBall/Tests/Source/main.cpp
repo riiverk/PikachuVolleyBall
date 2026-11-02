@@ -173,7 +173,7 @@ void LinkScaffolds()
     room.BroadcastEvents(); room.BroadcastStageOver(); room.BroadcastGameOver(0);
     room.OnNextStage(0); (void)room.WaitNextStage(); room.OnPlayerLeave(0);
     room.EndByQuit(); room.OnChat(0, "");
-    Check(!server.InitServer(SERVERPORT), "scaffold must not pretend to listen");
+    Check(server.InitServer(0), "server listener initialization");
     server.AcceptLoop(); server.CloseServer();
     (void)session.RecvPacket(nullptr); session.ProcessPacket(nullptr);
     (void)session.SendPacket(nullptr, 0); session.Disconnect();

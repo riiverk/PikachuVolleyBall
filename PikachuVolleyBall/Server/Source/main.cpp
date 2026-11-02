@@ -4,15 +4,27 @@
 
 int main(int argc, char* argv[])
 {
-    if (argc == 2 && std::string_view(argv[1]) == "--check")
+    const bool check = argc == 2 && std::string_view(argv[1]) == "--check";
+    if (argc > 1 && !check)
     {
-        std::cout << "11/1 scaffold OK; port=" << SERVERPORT
-                  << "; packet types=12; state bytes=" << sizeof(GameStatePacket)
-                  << "; network/simulation not implemented yet.\n";
+        std::cerr << "Usage: Server.exe [--check]\n";
+        return 1;
+    }
+    Server server;
+    if (!server.InitServer(check ? 0 : SERVERPORT))
+    {
+        std::cerr << "Server initialization failed. Winsock error: " << server.GetLastError() << '\n';
+        return 1;
+    }
+    std::cout << "Listening on port " << server.GetPort() << ".\n";
+    if (check)
+    {
+        server.CloseServer();
+        std::cout << "PASS: Winsock startup, bind, listen and cleanup.\n";
         return 0;
     }
-    std::cout << "PikachuVolleyBall Server: 11/1 scaffold.\n"
-                 "No listener is started. InitServer is scheduled for 11/2.\n"
-                 "Use --check to verify this executable.\n";
+    std::cout << "TCP listener is ready. Accept/room processing is not implemented yet.\n"
+                 "Press Enter to close the server." << std::endl;
+    std::cin.get();
     return 0;
 }
