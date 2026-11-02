@@ -33,6 +33,9 @@
     <ClInclude Include="Source\ClientSession.h">
       <Filter>Headers</Filter>
     </ClInclude>
+    <ClInclude Include="Source\PlayerInput.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
     <ClInclude Include="Source\GameWorld.h">
       <Filter>Headers</Filter>
     </ClInclude>
