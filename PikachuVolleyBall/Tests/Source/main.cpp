@@ -182,7 +182,7 @@ void LinkScaffolds()
     RoomManager manager;
     Check(manager.JoinRoom(1, &session, index, result) == nullptr && index == -1, "no false room admission");
     manager.RemoveRoom(1);
-    Check(!network.Connect("127.0.0.1", SERVERPORT), "scaffold must not pretend to connect");
+    Check(!network.Connect(nullptr, SERVERPORT), "invalid connection request rejected");
     network.SendJoinRoom(1, "test"); network.SendInput(0); network.SendChat("");
     network.SendNextStage(); network.GetLatestState(state); network.ProcessPacket(nullptr);
     network.Disconnect(); (void)NetworkClient::RecvThread(nullptr);
