@@ -21,7 +21,7 @@ foreach ($name in @('Client', 'Server', 'Tests')) {
 if ($Verify) {
     $outputRoot = Join-Path $solutionRoot "bin/$Platform/$Configuration"
     & (Join-Path $outputRoot 'Server/Server.exe') --check
-    if ($LASTEXITCODE -ne 0) { throw 'Server scaffold check failed.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Server initialization check failed.' }
     & (Join-Path $outputRoot 'Tests/Tests.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Foundation checks failed.' }
     foreach ($resource in @('images/sprite_sheet.bmp', 'images/warning.bmp', 'sounds/bgm.wav', 'sounds/Stage2_Bgm.wav')) {
@@ -29,5 +29,5 @@ if ($Verify) {
             throw "Missing client resource: $resource"
         }
     }
-    Write-Host 'Verified: server scaffold, protocol/TCP tests and copied client resources.'
+    Write-Host 'Verified: server initialization, protocol/TCP/input tests and copied client resources.'
 }

@@ -153,6 +153,125 @@ void ShortAndInvalidTest()
     std::cout << "PASS: truncated stream, invalid arguments and socket errors\n";
 }
 
+void ServerConnectTest()
+{
+    // No surrounding WSAStartup: both classes must own their Winsock lifetime.
+    {
+        Server server;
+        Check(server.InitServer(0) && server.GetPort() != 0, "server must bind and listen");
+        const u_short port = server.GetPort();
+        Check(!server.InitServer(0) && server.GetLastError() == WSAEALREADY, "reject double initialization");
+        Check(server.GetPort() == port, "double initialization must keep existing listener");
+
+        Server duplicate;
+        Check(!duplicate.InitServer(port) && duplicate.GetLastError() != 0, "busy port must fail");
+        Check(duplicate.GetPort() == 0, "failed initialization must not expose a port");
+
+        NetworkClient client;
+        Check(client.Connect("127.0.0.1", port) && client.IsConnected(), "client connects to server listener");
+        Check(!client.Connect("127.0.0.1", port) && client.GetLastError() == WSAEISCONN,
+              "double connect must not replace a live connection");
+        Check(client.IsConnected(), "double connect preserves first socket");
+        client.Disconnect();
+        client.Disconnect();
+        Check(!client.IsConnected(), "disconnect closes transport");
+        server.CloseServer();
+        server.CloseServer();
+        Check(server.GetPort() == 0, "close clears bound port");
+        Check(server.InitServer(port), "server can reuse port after close");
+        Check(client.Connect("127.0.0.1", port), "client can reconnect after disconnect");
+    }
+    SOCKET leftover = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    const int error = WSAGetLastError();
+    if (leftover != INVALID_SOCKET) closesocket(leftover);
+    Check(leftover == INVALID_SOCKET && error == WSANOTINITIALISED, "destructors must balance every WSAStartup");
+    std::cout << "PASS: server listener, TCP connect, busy port, reconnect and automatic cleanup\n";
+}
+
+void ClientFailureTest()
+{
+    NetworkClient client;
+    Check(!client.Connect(nullptr, 9000) && client.GetLastError() == WSAEINVAL, "null IP rejected");
+    Check(!client.Connect("", 9000) && client.GetLastError() == WSAEINVAL, "empty IP rejected");
+    Check(!client.Connect("127.0.0.1", 0) && client.GetLastError() == WSAEINVAL, "zero remote port rejected");
+    Check(!client.Connect("999.0.0.1", 9000) && client.GetLastError() == WSAEINVAL, "invalid IPv4 rejected");
+    Check(!client.IsConnected(), "invalid input must not leave a connected socket");
+
+    // Reserve a local port without listening, so connection refusal is deterministic.
+    Socket reserved;
+    reserved.value = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    Check(reserved.value != INVALID_SOCKET, "reserve refusal port");
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    Check(bind(reserved.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "bind refusal port");
+    int length = sizeof(address);
+    Check(getsockname(reserved.value, reinterpret_cast<sockaddr*>(&address), &length) == 0, "get refusal port");
+    const u_short port = ntohs(address.sin_port);
+    Check(!client.Connect("127.0.0.1", port) && client.GetLastError() == WSAECONNREFUSED,
+          "connection refused must report the real socket error");
+    Check(!client.IsConnected(), "failed connect must release its socket");
+    Check(listen(reserved.value, 1) == 0, "start reserved listener");
+    Check(client.Connect("127.0.0.1", port) && client.GetLastError() == 0, "retry after failed connect");
+    Socket accepted;
+    accepted.value = accept(reserved.value, nullptr, nullptr);
+    Check(accepted.value != INVALID_SOCKET, "client must complete a real TCP handshake");
+    client.Disconnect();
+    std::cout << "PASS: invalid addresses, connection refusal and retry on the same client\n";
+}
+
+void PlayerInputTest()
+{
+    auto input = DecodePlayerInput(LEFT, 0, Action::Idle);
+    Check(input.action == Action::Move && input.moveDirection == -1 && input.pressed == LEFT, "move left");
+    input = DecodePlayerInput(RIGHT, LEFT, Action::Move);
+    Check(input.moveDirection == 1 && input.pressed == RIGHT && input.released == LEFT, "change direction");
+    input = DecodePlayerInput(LEFT | RIGHT, 0, Action::Idle);
+    Check(input.moveDirection == 0 && input.action == Action::Idle, "opposite keys cancel");
+    input = DecodePlayerInput(UP, 0, Action::Idle);
+    Check(input.jump && input.action == Action::Jump, "new up press requests jump");
+    input = DecodePlayerInput(UP, UP, Action::Idle);
+    Check(!input.jump && input.pressed == 0, "holding jump must not retrigger even after landing");
+    input = DecodePlayerInput(UP, 0, Action::Jump);
+    Check(!input.jump, "cannot jump again in the air");
+    input = DecodePlayerInput(ACTION, 0, Action::Jump);
+    Check(input.spike && input.action == Action::Spike && input.slideDirection == 0, "air action requests spike");
+    input = DecodePlayerInput(ACTION, ACTION, Action::Jump);
+    Check(!input.spike && input.slideDirection == 0, "holding action must not retrigger");
+    input = DecodePlayerInput(ACTION, ACTION, Action::Spike);
+    Check(!input.spike && input.action == Action::Spike, "ongoing spike is preserved without a new request");
+    input = DecodePlayerInput(LEFT | ACTION, 0, Action::Move);
+    Check(input.action == Action::Slide && input.slideDirection == -1 && !input.spike, "ground action requests left slide");
+    input = DecodePlayerInput(RIGHT | ACTION, 0, Action::Idle);
+    Check(input.slideDirection == 1, "ground action requests right slide");
+    input = DecodePlayerInput(ACTION, 0, Action::Idle);
+    Check(input.action == Action::Idle, "stationary ground action has no slide direction");
+    input = DecodePlayerInput(UP | ACTION, 0, Action::Idle);
+    Check(input.jump && input.spike && input.action == Action::Spike, "jump and spike can be pressed together");
+    for (Action locked : {Action::Slide, Action::Win, Action::Lose})
+    {
+        input = DecodePlayerInput(UP | ACTION | RIGHT, 0, locked);
+        Check(input.action == locked && !input.jump && !input.spike && input.moveDirection == 0,
+              "locked action must not be interrupted");
+    }
+    input = DecodePlayerInput(0xff, 0, Action::Idle);
+    Check(input.held == (LEFT | RIGHT | UP | ACTION), "ignore undefined input bits");
+    GameWorld world;
+    std::uint8_t keys[2] = {LEFT | UP, RIGHT};
+    world.Update(keys);
+    Check(world.GetPlayerInput(0).jump && world.GetPlayerInput(0).moveDirection == -1, "player one input");
+    Check(!world.GetPlayerInput(1).jump && world.GetPlayerInput(1).moveDirection == 1, "player two input is independent");
+    world.Update(keys);
+    Check(!world.GetPlayerInput(0).jump && world.GetPlayerInput(0).pressed == 0, "held input across game ticks");
+    keys[0] = 0;
+    world.Update(keys);
+    Check(world.GetPlayerInput(0).released == (LEFT | UP), "key release tracked");
+    keys[0] = UP;
+    world.Update(keys);
+    Check(world.GetPlayerInput(0).jump, "release and press allows another jump request");
+    std::cout << "PASS: move/jump/slide/spike input, press edges, action locks and independent players\n";
+}
+
 void LinkScaffolds()
 {
     // Exercise declarations from each module so missing definitions fail linking.
@@ -190,18 +309,25 @@ void LinkScaffolds()
     client.ChangeScene(Scene::Waiting); client.OnKey(WM_KEYDOWN, VK_LEFT);
     client.OnNetEvent(0, 0); client.OnTimer();
     (void)renderer.Initialize(nullptr); renderer.Render(state); renderer.Shutdown();
-    std::cout << "PASS: Client/Server class scaffolds link; no false connection success\n";
+    std::cout << "PASS: remaining Client/Server class interfaces link\n";
 }
 }
 
 int main()
 {
+    try { ServerConnectTest(); }
+    catch (const std::exception& error)
+    {
+        std::cerr << "FAIL: " << error.what() << '\n';
+        return 1;
+    }
     WSADATA data{};
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return 1;
     int code = 0;
     try
     {
-        ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest(); LinkScaffolds();
+        ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
+        ClientFailureTest(); PlayerInputTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
