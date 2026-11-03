@@ -2,6 +2,7 @@
 #include "../../Server/Source/Server.h"
 #include "../../Server/Source/ClientSession.h"
 #include "../../Server/Source/Room.h"
+#include "../../Server/Source/PlayerMovement.h"
 #include "../../Client/Source/GameClient.h"
 #include <array>
 #include <chrono>
@@ -220,6 +221,149 @@ void ClientFailureTest()
     std::cout << "PASS: invalid addresses, connection refusal and retry on the same client\n";
 }
 
+template<class Predicate> void WaitUntil(Predicate predicate, const char* label)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!predicate())
+    {
+        Check(std::chrono::steady_clock::now() < deadline, label);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+}
+
+struct AcceptRunner
+{
+    Server& server;
+    std::thread thread;
+    explicit AcceptRunner(Server& target) : server(target), thread(&Server::AcceptLoop, &target) {}
+    void Finish()
+    {
+        server.CloseServer();
+        if (thread.joinable()) thread.join();
+    }
+    ~AcceptRunner() { Finish(); }
+};
+
+void ServerAcceptTest()
+{
+    DWORD baselineHandles = 0, finalHandles = 0;
+    Server server;
+    for (int cycle = 0; cycle < 6; ++cycle)
+    {
+        Check(server.InitServer(0) && server.GetAcceptedCount() == 0, "restart listener with a fresh accept count");
+        AcceptRunner running(server);
+        WaitUntil([&] { return server.IsAccepting(); }, "accept loop must start");
+        std::array<NetworkClient, 6> clients;
+        for (auto& client : clients)
+            Check(client.Connect("127.0.0.1", server.GetPort()), "connect multiple clients");
+        WaitUntil([&] { return server.GetAcceptedCount() == clients.size(); }, "accept all client connections");
+        Check(server.GetClientCount() == clients.size(), "accepted sessions must be owned by the server");
+        // Closing with connected clients must release sessions, worker handles and sockets.
+        running.Finish();
+        Check(!server.IsAccepting() && server.GetClientCount() == 0, "shutdown releases all client sessions");
+        for (auto& client : clients) client.Disconnect();
+        if (cycle == 0)
+            Check(GetProcessHandleCount(GetCurrentProcess(), &baselineHandles) != 0, "baseline handle count");
+    }
+    Check(GetProcessHandleCount(GetCurrentProcess(), &finalHandles) != 0, "final handle count");
+    Check(finalHandles <= baselineHandles + 2, "repeated accept/close must not leak socket or thread handles");
+
+    Check(server.InitServer(0), "idle listener initialization");
+    AcceptRunner idle(server);
+    WaitUntil([&] { return server.IsAccepting(); }, "idle accept loop must start");
+    const auto started = std::chrono::steady_clock::now();
+    idle.Finish();
+    Check(std::chrono::steady_clock::now() - started < std::chrono::seconds(2), "idle accept must stop without a new connection");
+    Check(server.InitServer(0), "concurrent close listener initialization");
+    AcceptRunner concurrent(server);
+    WaitUntil([&] { return server.IsAccepting(); }, "concurrent close loop must start");
+    std::thread firstClose(&Server::CloseServer, &server);
+    std::thread secondClose(&Server::CloseServer, &server);
+    firstClose.join();
+    secondClose.join();
+    concurrent.Finish();
+    Check(server.GetPort() == 0 && server.GetClientCount() == 0, "concurrent close calls complete safely");
+    ClientSession invalid;
+    Check(!invalid.Start() && invalid.GetLastError() == WSAENOTSOCK, "invalid session must not start a worker");
+    std::cout << "PASS: 36 accepted sessions, cleanup, restart, idle and concurrent shutdown\n";
+}
+
+void HorizontalMovementTest()
+{
+    GameWorld world;
+    GameStatePacket state;
+    world.FillState(state);
+    Check(state.p[0].x == 30 && state.p[1].x == 950, "player spawn positions");
+    std::uint8_t keys[2] = {RIGHT, LEFT};
+    world.Update(keys);
+    world.FillState(state);
+    Check(state.p[0].x == 40 && state.p[1].x == 940, "independent horizontal movement at normal speed");
+    Check(state.p[0].y == 560 && state.p[1].y == 560, "horizontal movement must not change height");
+    Check(state.p[0].action == Action::Move && state.p[1].action == Action::Move, "walking state");
+    for (int tick = 0; tick < 100; ++tick) world.Update(keys);
+    world.FillState(state);
+    Check(state.p[0].x == GameConst::PlayerMaxX[0] && state.p[1].x == GameConst::PlayerMinX[1], "players cannot cross the net");
+    keys[0] = LEFT; keys[1] = RIGHT;
+    for (int tick = 0; tick < 100; ++tick) world.Update(keys);
+    world.FillState(state);
+    Check(state.p[0].x == GameConst::PlayerMinX[0] && state.p[1].x == GameConst::PlayerMaxX[1], "outer court bounds");
+    keys[0] = 0; keys[1] = LEFT | RIGHT;
+    world.Update(keys);
+    GameStatePacket stopped;
+    world.FillState(stopped);
+    Check(stopped.p[0].x == state.p[0].x && stopped.p[1].x == state.p[1].x, "release and opposite keys stop movement");
+    Check(stopped.p[0].action == Action::Idle && stopped.p[1].action == Action::Idle, "idle state after stopping");
+
+    PlayerState awakened;
+    awakened.x = 30; awakened.y = 560; awakened.evil = 1;
+    PlayerInput right; right.moveDirection = 1;
+    MovePlayerHorizontally(awakened, right, 0);
+    Check(awakened.x == 45, "awakened movement speed");
+    awakened.x = GameConst::PlayerMaxX[0] - 2;
+    MovePlayerHorizontally(awakened, right, 0);
+    Check(awakened.x == GameConst::PlayerMaxX[0], "clamp the final partial step");
+    for (Action locked : {Action::Slide, Action::Win, Action::Lose})
+    {
+        awakened.x = 30; awakened.action = locked;
+        MovePlayerHorizontally(awakened, right, 0);
+        Check(awakened.x == 30 && awakened.action == locked, "locked animation must block walking");
+    }
+    awakened.action = Action::Jump;
+    MovePlayerHorizontally(awakened, right, 0);
+    Check(awakened.x == 45 && awakened.action == Action::Jump && awakened.y == 560, "horizontal movement preserves airborne action");
+    std::cout << "PASS: player movement, court/net bounds, awakened speed and action restrictions\n";
+}
+
+void InputManagerTest()
+{
+    InputManager input;
+    Check(input.GetKeys() == 0, "initial keys are empty");
+    Check(input.OnKeyDown(VK_LEFT) && input.GetKeys() == LEFT, "left key down");
+    Check(!input.OnKeyDown(VK_LEFT), "key auto-repeat must not signal another state change");
+    Check(input.OnKeyDown('Z') && input.GetKeys() == (LEFT | ACTION), "combined movement and action");
+    Check(!input.OnKeyDown(VK_RETURN) && !input.OnKeyDown(VK_DOWN) && !input.OnKeyDown('A'), "chat and unrelated keys must not affect gameplay");
+    Check(input.OnKeyUp(VK_LEFT) && input.GetKeys() == ACTION, "release only the matching key bit");
+    Check(!input.OnKeyUp(VK_LEFT) && !input.OnKeyUp(VK_RETURN), "repeated and unrelated key-up events are ignored");
+    Check(input.OnKeyDown(VK_UP) && input.OnKeyDown(VK_RIGHT), "up and right mappings");
+    Check(input.GetKeys() == (UP | RIGHT | ACTION), "all simultaneous key bits are retained");
+    input.Reset();
+    Check(input.GetKeys() == 0 && !input.OnKeyUp('Z'), "reset clears every key");
+
+    GameWorld world;
+    Check(input.OnKeyDown(VK_RIGHT), "press right after reset");
+    std::uint8_t keys[2] = {input.GetKeys(), 0};
+    world.Update(keys);
+    Check(!input.OnKeyDown(VK_RIGHT), "holding right changes position but not the key mask");
+    world.Update(keys);
+    GameStatePacket state;
+    world.FillState(state);
+    Check(state.p[0].x == 50 && state.p[1].x == 950, "client key state drives server movement over successive ticks");
+    input.OnKeyUp(VK_RIGHT); keys[0] = input.GetKeys();
+    world.Update(keys); world.FillState(state);
+    Check(state.p[0].x == 50 && state.p[0].action == Action::Idle, "release stops server movement");
+    std::cout << "PASS: client key mapping, repeat suppression, combined keys and movement integration\n";
+}
+
 void PlayerInputTest()
 {
     auto input = DecodePlayerInput(LEFT, 0, Action::Idle);
@@ -315,7 +459,7 @@ void LinkScaffolds()
 
 int main()
 {
-    try { ServerConnectTest(); }
+    try { ServerConnectTest(); ServerAcceptTest(); }
     catch (const std::exception& error)
     {
         std::cerr << "FAIL: " << error.what() << '\n';
@@ -327,7 +471,7 @@ int main()
     try
     {
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
-        ClientFailureTest(); PlayerInputTest(); LinkScaffolds();
+        ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
