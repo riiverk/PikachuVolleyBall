@@ -293,7 +293,7 @@ void LinkScaffolds()
     room.OnNextStage(0); (void)room.WaitNextStage(); room.OnPlayerLeave(0);
     room.EndByQuit(); room.OnChat(0, "");
     Check(server.InitServer(0), "server listener initialization");
-    server.AcceptLoop(); server.CloseServer();
+    server.CloseServer(); server.AcceptLoop();
     (void)session.RecvPacket(nullptr); session.ProcessPacket(nullptr);
     (void)session.SendPacket(nullptr, 0); session.Disconnect();
     (void)ClientSession::ClientThread(nullptr); (void)Room::RoomThread(nullptr);
