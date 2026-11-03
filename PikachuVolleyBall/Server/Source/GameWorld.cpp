@@ -1,11 +1,28 @@
 #include "GameWorld.h"
+#include "PlayerMovement.h"
 #include <stdexcept>
+
+GameWorld::GameWorld()
+{
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        state_.p[i].x = GameConst::PlayerStartX[i];
+        state_.p[i].y = GameConst::PlayerGroundY;
+    }
+}
 
 void GameWorld::Reset(int, int) { /* TODO 11/10: initialize stage and serve. */ }
 void GameWorld::Update(const std::uint8_t inputs[2])
 {
     ApplyInputs(inputs);
-    /* TODO 11/11: integrate movement, physics and scoring into the tick. */
+    MovePlayers();
+    /* TODO 11/11: integrate jumping, physics and scoring into the tick. */
+}
+
+void GameWorld::MovePlayers()
+{
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+        MovePlayerHorizontally(state_.p[i], playerInputs_[i], i);
 }
 
 void GameWorld::ApplyInputs(const std::uint8_t inputs[2])
