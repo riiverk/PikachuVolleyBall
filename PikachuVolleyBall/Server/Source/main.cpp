@@ -1,8 +1,37 @@
 #include "Server.h"
 #include <iostream>
 #include <string_view>
-#include <thread>
 #include <chrono>
+
+namespace
+{
+struct CheckContext
+{
+    Server* server;
+    bool accepted = false;
+};
+
+// Only --check uses a helper thread. The server accepts on main in both modes.
+DWORD WINAPI CheckClientThread(LPVOID arg)
+{
+    CheckContext* context = static_cast<CheckContext*>(arg);
+    Server& server = *context->server;
+    const SOCKET client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(server.GetPort());
+    const bool connected = client != INVALID_SOCKET &&
+        connect(client, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+    if (client != INVALID_SOCKET) closesocket(client);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (connected && server.GetAcceptedCount() == 0 && std::chrono::steady_clock::now() < deadline)
+        Sleep(5);
+    context->accepted = connected && server.GetAcceptedCount() == 1;
+    server.CloseServer();
+    return 0;
+}
+}
 
 int main(int argc, char* argv[])
 {
@@ -19,24 +48,22 @@ int main(int argc, char* argv[])
         return 1;
     }
     std::cout << "Listening on port " << server.GetPort() << ".\n";
-    std::thread acceptThread(&Server::AcceptLoop, &server);
     if (check)
     {
-        const SOCKET client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        sockaddr_in address{};
-        address.sin_family = AF_INET;
-        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        address.sin_port = htons(server.GetPort());
-        const bool connected = client != INVALID_SOCKET &&
-            connect(client, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
-        if (client != INVALID_SOCKET) closesocket(client);
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-        while (connected && server.GetAcceptedCount() == 0 && std::chrono::steady_clock::now() < deadline)
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        const bool accepted = connected && server.GetAcceptedCount() == 1;
+        CheckContext context{&server};
+        HANDLE clientThread = CreateThread(nullptr, 0, CheckClientThread, &context, 0, nullptr);
+        if (clientThread == nullptr)
+        {
+            const DWORD error = GetLastError();
+            server.CloseServer();
+            std::cerr << "Check client thread creation failed. Windows error: " << error << '\n';
+            return 1;
+        }
+        server.AcceptLoop();
+        WaitForSingleObject(clientThread, INFINITE);
+        CloseHandle(clientThread);
         server.CloseServer();
-        acceptThread.join();
-        if (!accepted)
+        if (!context.accepted)
         {
             std::cerr << "FAIL: TCP accept/session creation. Error: " << server.GetLastError() << '\n';
             return 1;
@@ -46,9 +73,9 @@ int main(int argc, char* argv[])
     }
     std::cout << "TCP connections are accepted. Packet/room processing is not implemented yet.\n"
                  "Press Enter to close the server." << std::endl;
-    std::cin.get();
+    server.EnableConsoleExit();
+    server.AcceptLoop();
     server.CloseServer();
-    acceptThread.join();
     std::cout << "Closed server after accepting " << server.GetAcceptedCount() << " client(s).\n";
     return 0;
 }

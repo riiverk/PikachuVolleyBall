@@ -1,20 +1,46 @@
 #include "Server.h"
+#include <conio.h>
 #include <new>
 
-Server::~Server() { CloseServer(); }
+Server::Server()
+{
+    InitializeCriticalSection(&stateLock_);
+    InitializeCriticalSection(&closeLock_);
+    // Manual-reset event: signaled whenever no accept loop is running.
+    acceptStopped_ = CreateEvent(nullptr, TRUE, TRUE, nullptr);
+    if (acceptStopped_ == nullptr) lastError_ = static_cast<int>(::GetLastError());
+}
+
+Server::~Server()
+{
+    CloseServer();
+    if (acceptStopped_ != nullptr) CloseHandle(acceptStopped_);
+    DeleteCriticalSection(&closeLock_);
+    DeleteCriticalSection(&stateLock_);
+}
 
 bool Server::InitServer(u_short port)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    EnterCriticalSection(&stateLock_);
+    if (acceptStopped_ == nullptr)
+    {
+        LeaveCriticalSection(&stateLock_);
+        return false;
+    }
     if (listenSocket_ != INVALID_SOCKET || closing_ || accepting_)
     {
         lastError_ = WSAEALREADY;
+        LeaveCriticalSection(&stateLock_);
         return false;
     }
     WSADATA data{};
     const int startupError = WSAStartup(MAKEWORD(2, 2), &data);
     lastError_ = startupError;
-    if (startupError != 0) return false;
+    if (startupError != 0)
+    {
+        LeaveCriticalSection(&stateLock_);
+        return false;
+    }
 
     SOCKET listener = INVALID_SOCKET;
     auto fail = [this, &listener]() {
@@ -22,6 +48,7 @@ bool Server::InitServer(u_short port)
         if (listener != INVALID_SOCKET) closesocket(listener);
         WSACleanup();
         lastError_ = error;
+        LeaveCriticalSection(&stateLock_);
         return false;
     };
     listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -52,25 +79,51 @@ bool Server::InitServer(u_short port)
     lastError_ = 0;
     stopping_ = false;
     acceptedCount_ = 0;
+    LeaveCriticalSection(&stateLock_);
     return true;
+}
+
+void Server::EnableConsoleExit()
+{
+    DWORD mode;
+    const bool hasConsole = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) != FALSE;
+    EnterCriticalSection(&stateLock_);
+    consoleExitEnabled_ = hasConsole;
+    LeaveCriticalSection(&stateLock_);
 }
 
 void Server::AcceptLoop()
 {
     SOCKET listener;
+    bool consoleExitEnabled;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (closing_ || stopping_ || listenSocket_ == INVALID_SOCKET) return;
+        EnterCriticalSection(&stateLock_);
+        if (closing_ || stopping_ || listenSocket_ == INVALID_SOCKET)
+        {
+            LeaveCriticalSection(&stateLock_);
+            return;
+        }
         if (accepting_)
         {
             lastError_ = WSAEALREADY;
+            LeaveCriticalSection(&stateLock_);
             return;
         }
         accepting_ = true;
+        ResetEvent(acceptStopped_);
         listener = listenSocket_;
+        consoleExitEnabled = consoleExitEnabled_;
+        LeaveCriticalSection(&stateLock_);
     }
-    while (!stopping_)
+    while (!IsStopping())
     {
+        // The main thread checks Enter between socket waits; no input thread is needed.
+        if (consoleExitEnabled && _kbhit())
+        {
+            const int key = _getch();
+            if (key == '\r') break;
+            if (key == 0 || key == 0xe0) _getch(); // Consume an extended key's second byte.
+        }
         fd_set readable;
         FD_ZERO(&readable);
         FD_SET(listener, &readable);
@@ -78,97 +131,147 @@ void Server::AcceptLoop()
         const int ready = select(0, &readable, nullptr, nullptr, &timeout);
         if (ready == SOCKET_ERROR)
         {
-            lastError_ = WSAGetLastError();
+            SetError(WSAGetLastError());
             break;
         }
-        if (ready == 0 || stopping_) continue;
+        if (ready == 0 || IsStopping()) continue;
         SOCKET accepted = accept(listener, nullptr, nullptr);
         if (accepted == INVALID_SOCKET)
         {
             const int error = WSAGetLastError();
             if (error == WSAEWOULDBLOCK || error == WSAECONNRESET) continue;
-            lastError_ = error;
+            SetError(error);
             break;
         }
         u_long blocking = 0;
         if (ioctlsocket(accepted, FIONBIO, &blocking) == SOCKET_ERROR)
         {
-            lastError_ = WSAGetLastError();
+            SetError(WSAGetLastError());
             closesocket(accepted);
             continue;
         }
-        std::unique_ptr<ClientSession> session(new (std::nothrow) ClientSession(accepted));
+        ClientSession* session = new (std::nothrow) ClientSession(accepted);
         if (!session)
         {
             closesocket(accepted);
-            lastError_ = WSAENOBUFS;
+            SetError(WSAENOBUFS);
             break;
         }
-        if (stopping_) break;
+        if (IsStopping())
+        {
+            delete session;
+            break;
+        }
         if (!session->Start())
         {
-            lastError_ = static_cast<int>(session->GetLastError());
+            SetError(static_cast<int>(session->GetLastError()));
+            delete session;
             continue;
         }
+        EnterCriticalSection(&stateLock_);
         try
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            clients_.push_back(std::move(session));
+            clients_.push_back(session);
             ++acceptedCount_;
         }
         catch (const std::bad_alloc&)
         {
             lastError_ = WSAENOBUFS;
+            LeaveCriticalSection(&stateLock_);
+            delete session;
             break;
         }
+        LeaveCriticalSection(&stateLock_);
     }
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        EnterCriticalSection(&stateLock_);
         accepting_ = false;
-        stopped_.notify_all();
+        SetEvent(acceptStopped_);
+        LeaveCriticalSection(&stateLock_);
     }
 }
 
 void Server::CloseServer()
 {
-    std::unique_lock<std::mutex> lock(mutex_);
-    if (closing_)
-    {
-        stopped_.wait(lock, [this] { return !closing_; });
-        return;
-    }
+    // Serialize close calls, but allow the accept loop to use stateLock_.
+    EnterCriticalSection(&closeLock_);
+    EnterCriticalSection(&stateLock_);
     closing_ = true;
     stopping_ = true;
-    stopped_.wait(lock, [this] { return !accepting_; });
+    LeaveCriticalSection(&stateLock_);
+
+    if (acceptStopped_ != nullptr) WaitForSingleObject(acceptStopped_, INFINITE);
+
+    EnterCriticalSection(&stateLock_);
     const SOCKET listener = listenSocket_;
     listenSocket_ = INVALID_SOCKET;
     port_ = 0;
     const bool cleanup = winsockStarted_;
     winsockStarted_ = false;
-    auto clients = std::move(clients_);
-    lock.unlock();
+    std::vector<ClientSession*> clients;
+    clients.swap(clients_);
+    LeaveCriticalSection(&stateLock_);
     if (listener != INVALID_SOCKET) closesocket(listener);
-    clients.clear(); // Shut down sockets and join workers before WSACleanup.
+    // ClientSession's destructor shuts down its socket and waits for its worker.
+    for (ClientSession* client : clients) delete client;
     if (cleanup) WSACleanup();
-    lock.lock();
+    EnterCriticalSection(&stateLock_);
     closing_ = false;
-    stopped_.notify_all();
+    LeaveCriticalSection(&stateLock_);
+    LeaveCriticalSection(&closeLock_);
 }
 
 u_short Server::GetPort() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return port_;
+    EnterCriticalSection(&stateLock_);
+    const u_short port = port_;
+    LeaveCriticalSection(&stateLock_);
+    return port;
 }
 
 std::size_t Server::GetClientCount() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return clients_.size();
+    EnterCriticalSection(&stateLock_);
+    const std::size_t count = clients_.size();
+    LeaveCriticalSection(&stateLock_);
+    return count;
 }
 
 bool Server::IsAccepting() const
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return accepting_;
+    EnterCriticalSection(&stateLock_);
+    const bool accepting = accepting_;
+    LeaveCriticalSection(&stateLock_);
+    return accepting;
+}
+
+int Server::GetLastError() const
+{
+    EnterCriticalSection(&stateLock_);
+    const int error = lastError_;
+    LeaveCriticalSection(&stateLock_);
+    return error;
+}
+
+std::size_t Server::GetAcceptedCount() const
+{
+    EnterCriticalSection(&stateLock_);
+    const std::size_t count = acceptedCount_;
+    LeaveCriticalSection(&stateLock_);
+    return count;
+}
+
+bool Server::IsStopping() const
+{
+    EnterCriticalSection(&stateLock_);
+    const bool stopping = stopping_;
+    LeaveCriticalSection(&stateLock_);
+    return stopping;
+}
+
+void Server::SetError(int error)
+{
+    EnterCriticalSection(&stateLock_);
+    lastError_ = error;
+    LeaveCriticalSection(&stateLock_);
 }
