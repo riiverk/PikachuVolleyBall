@@ -17,3 +17,23 @@ inline void MovePlayerHorizontally(PlayerState& player, const PlayerInput& input
     if (player.action == Action::Idle || player.action == Action::Move)
         player.action = direction == 0 ? Action::Idle : Action::Move;
 }
+
+inline void UpdatePlayerJump(PlayerState& player, const PlayerInput& input, int& velocityY)
+{
+    if (player.action == Action::Slide || player.action == Action::Win || player.action == Action::Lose) return;
+    if (input.jump && player.y == GameConst::PlayerGroundY &&
+        player.action != Action::Jump && player.action != Action::Spike)
+    {
+        velocityY = GameConst::JumpPower;
+        player.action = Action::Jump;
+    }
+    if (player.action != Action::Jump && player.action != Action::Spike) return;
+    player.y += velocityY;
+    velocityY += GameConst::JumpGravity;
+    if (player.y >= GameConst::PlayerGroundY)
+    {
+        player.y = GameConst::PlayerGroundY;
+        velocityY = 0;
+        player.action = input.moveDirection == 0 ? Action::Idle : Action::Move;
+    }
+}

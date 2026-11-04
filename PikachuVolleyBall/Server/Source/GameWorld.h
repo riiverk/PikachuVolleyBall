@@ -6,7 +6,7 @@
 
 struct GameEvent { EventKind kind; std::uint8_t who; };
 
-// Input decoding and horizontal movement are implemented; jumping and physics follow.
+// Input decoding, horizontal movement and jumping are implemented; ball physics follows.
 class GameWorld
 {
 public:
@@ -23,10 +23,12 @@ public:
     int GetLoser();
 private:
     void MovePlayers();
+    void JumpPlayers();
     GameStatePacket state_{};
     std::vector<GameEvent> events_;
     std::uint8_t previousInputs_[2]{};
     std::array<PlayerInput, 2> playerInputs_{};
+    int velocityY_[2]{};
     std::uint8_t scores_[2]{};
     int stage_ = 1;
     int serveSide_ = 0;

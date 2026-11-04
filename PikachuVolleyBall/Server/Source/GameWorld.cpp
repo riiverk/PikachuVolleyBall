@@ -16,13 +16,20 @@ void GameWorld::Update(const std::uint8_t inputs[2])
 {
     ApplyInputs(inputs);
     MovePlayers();
-    /* TODO 11/11: integrate jumping, physics and scoring into the tick. */
+    JumpPlayers();
+    /* TODO 11/11: integrate ball physics and scoring into the tick. */
 }
 
 void GameWorld::MovePlayers()
 {
     for (int i = 0; i < GameConst::PlayerCount; ++i)
         MovePlayerHorizontally(state_.p[i], playerInputs_[i], i);
+}
+
+void GameWorld::JumpPlayers()
+{
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+        UpdatePlayerJump(state_.p[i], playerInputs_[i], velocityY_[i]);
 }
 
 void GameWorld::ApplyInputs(const std::uint8_t inputs[2])

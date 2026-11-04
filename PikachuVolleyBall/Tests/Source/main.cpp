@@ -412,7 +412,12 @@ void PlayerInputTest()
     Check(world.GetPlayerInput(0).released == (LEFT | UP), "key release tracked");
     keys[0] = UP;
     world.Update(keys);
-    Check(world.GetPlayerInput(0).jump, "release and press allows another jump request");
+    Check(!world.GetPlayerInput(0).jump, "release and press cannot restart an airborne jump");
+    keys[0] = 0;
+    for (int tick = 0; tick < 70; ++tick) world.Update(keys);
+    keys[0] = UP;
+    world.Update(keys);
+    Check(world.GetPlayerInput(0).jump, "release and press after landing allows another jump request");
     std::cout << "PASS: move/jump/slide/spike input, press edges, action locks and independent players\n";
 }
 
