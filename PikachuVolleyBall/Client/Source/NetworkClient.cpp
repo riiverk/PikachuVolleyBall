@@ -1,4 +1,5 @@
 #include "NetworkClient.h"
+#include <cstring>
 
 NetworkClient::~NetworkClient() { Disconnect(); }
 
@@ -44,7 +45,45 @@ bool NetworkClient::Connect(const char* ip, u_short port)
     // Starting the current placeholder would immediately terminate the thread.
     return true;
 }
-void NetworkClient::SendJoinRoom(int, const char*) { /* TODO 11/4 */ }
+void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
+{
+    if (!IsConnected())
+    {
+        lastError_ = WSAENOTCONN;
+        return;
+    }
+    if (roomNo <= 0 || nick == nullptr)
+    {
+        lastError_ = WSAEINVAL;
+        return;
+    }
+    int length = 0;
+    while (length < MAX_NICK && nick[length] != '\0') ++length;
+    if (length == 0 || length == MAX_NICK ||
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, nick, length, nullptr, 0) == 0)
+    {
+        lastError_ = WSAEINVAL;
+        return;
+    }
+    JoinRoomPacket packet;
+    packet.roomNo = roomNo;
+    std::memcpy(packet.nickname, nick, length);
+    const char* bytes = reinterpret_cast<const char*>(&packet);
+    int sent = 0;
+    while (sent < sizeof(packet))
+    {
+        const int count = send(socket_, bytes + sent, static_cast<int>(sizeof(packet)) - sent, 0);
+        if (count <= 0)
+        {
+            const int error = count == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
+            Disconnect();
+            lastError_ = error;
+            return;
+        }
+        sent += count;
+    }
+    lastError_ = 0;
+}
 DWORD WINAPI NetworkClient::RecvThread(LPVOID) { return ERROR_CALL_NOT_IMPLEMENTED; }
 void NetworkClient::ProcessPacket(char*) { /* TODO 11/7 */ }
 void NetworkClient::SendInput(std::uint8_t) { /* TODO 11/5 */ }
