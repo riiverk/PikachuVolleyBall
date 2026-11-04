@@ -10,6 +10,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 namespace
 {
@@ -364,6 +365,156 @@ void InputManagerTest()
     std::cout << "PASS: client key mapping, repeat suppression, combined keys and movement integration\n";
 }
 
+void JumpTest()
+{
+    GameWorld world;
+    GameStatePacket state;
+    std::uint8_t keys[2] = {UP | RIGHT, 0};
+    world.Update(keys);
+    world.FillState(state);
+    Check(state.p[0].y == 535 && state.p[0].x == 40 && state.p[0].action == Action::Jump,
+          "jump starts with the original upward velocity and permits horizontal movement");
+    Check(state.p[1].y == 560 && state.p[1].action == Action::Idle, "other player stays grounded");
+    int minimumY = state.p[0].y;
+    bool landed = false;
+    for (int tick = 1; tick <= 70; ++tick)
+    {
+        world.Update(keys);
+        world.FillState(state);
+        minimumY = std::min(minimumY, static_cast<int>(state.p[0].y));
+        Check(state.p[0].y <= 560, "jump never goes below the ground");
+        if (state.p[0].y == 560) { landed = true; break; }
+    }
+    Check(landed && minimumY == 235 && state.p[0].action == Action::Move, "gravity, jump apex and walking landing");
+    for (int tick = 0; tick < 5; ++tick) world.Update(keys);
+    world.FillState(state);
+    Check(state.p[0].y == 560, "holding up across landing must not trigger another jump");
+    keys[0] = 0; world.Update(keys);
+    keys[0] = UP; world.Update(keys); world.FillState(state);
+    Check(state.p[0].y == 535, "release and press starts a second jump with reset velocity");
+    keys[1] = UP; world.Update(keys); world.FillState(state);
+    Check(state.p[0].y == 511 && state.p[1].y == 535, "players have independent jump velocities");
+
+    PlayerState player;
+    player.x = 30; player.y = 560;
+    PlayerInput request; request.jump = true;
+    for (Action locked : {Action::Slide, Action::Win, Action::Lose})
+    {
+        player.action = locked;
+        int velocity = 0;
+        UpdatePlayerJump(player, request, velocity);
+        Check(player.y == 560 && velocity == 0 && player.action == locked, "locked action must block jumping");
+    }
+    player.y = 559; player.action = Action::Jump;
+    int velocity = 4;
+    UpdatePlayerJump(player, PlayerInput{}, velocity);
+    Check(player.y == 560 && velocity == 0 && player.action == Action::Idle, "landing clamps overshoot and clears velocity");
+    std::cout << "PASS: jump ascent/gravity/landing, held-key suppression, air movement and independent players\n";
+}
+
+void SessionThreadTest()
+{
+    Check(ClientSession::ClientThread(nullptr) == ERROR_INVALID_PARAMETER, "null thread argument rejected");
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start a real session worker");
+        Check(!session.WaitForFinish(30), "worker must block waiting for a packet");
+        InputPacket input; input.keys = RIGHT;
+        const char* bytes = reinterpret_cast<const char*>(&input);
+        stream.Send(bytes, 1);
+        Check(!session.WaitForFinish(30), "fragmented header must not finish the worker");
+        NextStagePacket next;
+        std::array<char, sizeof(input) - 1 + sizeof(next)> rest{};
+        std::memcpy(rest.data(), bytes + 1, sizeof(input) - 1);
+        std::memcpy(rest.data() + sizeof(input) - 1, &next, sizeof(next));
+        stream.Send(rest.data(), static_cast<int>(rest.size()));
+        shutdown(stream.sender.value, SD_SEND);
+        Check(session.WaitForFinish(2000), "worker finishes on graceful EOF");
+        Check(session.GetLastError() == 0 && session.GetReceivedCount() == 2, "loop receives both frames with separate boundaries");
+        char tail;
+        Check(recv(stream.sender.value, &tail, 1, 0) == 0, "worker closes the accepted socket on exit");
+    }
+    auto reject = [](const char* bytes, int length, DWORD expected) {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start malformed packet worker");
+        stream.Send(bytes, length);
+        shutdown(stream.sender.value, SD_SEND);
+        Check(session.WaitForFinish(2000), "malformed or truncated packet must end the worker");
+        Check(session.GetLastError() == expected && session.GetReceivedCount() == 0, "bad frame must not reach ProcessPacket");
+    };
+    const PacketHeader tooSmall{2, PacketType::INPUT};
+    const PacketHeader tooLarge{MAX_PACKET_SIZE + 1, PacketType::INPUT};
+    const PacketHeader unknown{3, static_cast<PacketType>(0xff)};
+    const PacketHeader mismatch{3, PacketType::INPUT};
+    reject(reinterpret_cast<const char*>(&tooSmall), sizeof(tooSmall), WSAEMSGSIZE);
+    reject(reinterpret_cast<const char*>(&tooLarge), sizeof(tooLarge), WSAEMSGSIZE);
+    reject(reinterpret_cast<const char*>(&unknown), sizeof(unknown), WSAEINVAL);
+    reject(reinterpret_cast<const char*>(&mismatch), sizeof(mismatch), WSAEINVAL);
+    InputPacket input;
+    reject(reinterpret_cast<const char*>(&input), 1, WSAECONNRESET);
+    reject(reinterpret_cast<const char*>(&input), sizeof(PacketHeader), WSAECONNRESET);
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start cancellable session worker");
+        stream.Send(reinterpret_cast<const char*>(&input), 1);
+        const auto started = std::chrono::steady_clock::now();
+        session.Stop();
+        Check(std::chrono::steady_clock::now() - started < std::chrono::seconds(2), "Stop must unblock partial header reception");
+        Check(session.GetLastError() == 0 && session.GetReceivedCount() == 0, "local cancellation is a clean exit");
+    }
+    std::cout << "PASS: session receive loop, TCP framing, malformed/truncated packets, EOF and cancellation\n";
+}
+
+void JoinRoomSendTest()
+{
+    NetworkClient client;
+    client.SendJoinRoom(1, "test");
+    Check(client.GetLastError() == WSAENOTCONN, "join requires a connected socket");
+    Socket listener;
+    listener.value = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    Check(listener.value != INVALID_SOCKET, "create join receiver listener");
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    Check(bind(listener.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "bind join receiver");
+    Check(listen(listener.value, 1) == 0, "listen for join request");
+    int length = sizeof(address);
+    Check(getsockname(listener.value, reinterpret_cast<sockaddr*>(&address), &length) == 0, "join receiver port");
+    Check(client.Connect("127.0.0.1", ntohs(address.sin_port)), "connect join client");
+    Socket receiver;
+    receiver.value = accept(listener.value, nullptr, nullptr);
+    Check(receiver.value != INVALID_SOCKET, "accept join client");
+    const DWORD timeout = 2000;
+    Check(setsockopt(receiver.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0,
+          "join receiver timeout");
+    client.SendJoinRoom(0, "test"); Check(client.GetLastError() == WSAEINVAL, "zero room rejected");
+    client.SendJoinRoom(-1, "test"); Check(client.GetLastError() == WSAEINVAL, "negative room rejected");
+    for (const char* nick : {static_cast<const char*>(nullptr), "", "1234567890123456", "\xff", "\xe3\x81"})
+    {
+        client.SendJoinRoom(1, nick);
+        Check(client.GetLastError() == WSAEINVAL && client.IsConnected(), "invalid nickname sends nothing and preserves transport");
+    }
+    client.SendJoinRoom(27, "피카츄");
+    Check(client.GetLastError() == 0, "send UTF-8 nickname");
+    JoinRoomPacket packet;
+    Check(recvn(receiver.value, reinterpret_cast<char*>(&packet), sizeof(packet)) == sizeof(packet), "receive complete JOIN_ROOM bytes");
+    Check(packet.type == PacketType::JOIN_ROOM && packet.size == 23 && packet.roomNo == 27, "join wire header and room number");
+    Check(std::strcmp(packet.nickname, "피카츄") == 0, "UTF-8 nickname is preserved");
+    for (int i = 9; i < MAX_NICK; ++i) Check(packet.nickname[i] == '\0', "unused nickname bytes must be zero");
+    client.SendJoinRoom(28, "123456789012345");
+    Check(client.GetLastError() == 0, "maximum length nickname");
+    Check(recvn(receiver.value, reinterpret_cast<char*>(&packet), sizeof(packet)) == sizeof(packet), "second join frame");
+    Check(packet.roomNo == 28 && std::strcmp(packet.nickname, "123456789012345") == 0 && packet.nickname[MAX_NICK - 1] == '\0',
+          "maximum nickname is NUL terminated");
+    client.Disconnect();
+    char tail;
+    Check(recv(receiver.value, &tail, 1, 0) == 0, "invalid requests must not leave extra wire data");
+    std::cout << "PASS: JOIN_ROOM wire bytes, UTF-8/length validation and disconnected client handling\n";
+}
+
 void PlayerInputTest()
 {
     auto input = DecodePlayerInput(LEFT, 0, Action::Idle);
@@ -464,6 +615,7 @@ void LinkScaffolds()
 
 int main()
 {
+    std::cout << std::unitbuf;
     try { ServerConnectTest(); ServerAcceptTest(); }
     catch (const std::exception& error)
     {
@@ -476,7 +628,8 @@ int main()
     try
     {
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
-        ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest(); LinkScaffolds();
+        ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
+        JumpTest(); SessionThreadTest(); JoinRoomSendTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
