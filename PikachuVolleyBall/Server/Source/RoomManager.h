@@ -1,7 +1,6 @@
 #pragma once
-#include "Protocol.h"
+#include "Common.h"
 #include <memory>
-#include <mutex>
 #include <unordered_map>
 
 class Room;
@@ -12,9 +11,11 @@ class RoomManager
 public:
     RoomManager();
     ~RoomManager();
+    RoomManager(const RoomManager&) = delete;
+    RoomManager& operator=(const RoomManager&) = delete;
     Room* JoinRoom(int roomNo, ClientSession* s, int& outIdx, std::uint8_t& outResult);
     void RemoveRoom(int roomNo);
 private:
     std::unordered_map<int, std::unique_ptr<Room>> rooms_;
-    std::mutex mutex_;
+    CRITICAL_SECTION csRooms_;
 };

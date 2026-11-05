@@ -1,5 +1,8 @@
 #include "Room.h"
 
+Room::Room() { InitializeCriticalSection(&csInput_); }
+Room::~Room() { DeleteCriticalSection(&csInput_); }
+
 void Room::Start() { /* TODO 11/12: create room thread. */ }
 DWORD WINAPI Room::RoomThread(LPVOID) { return ERROR_CALL_NOT_IMPLEMENTED; }
 void Room::SetInput(int, std::uint8_t) { /* TODO 11/13 */ }

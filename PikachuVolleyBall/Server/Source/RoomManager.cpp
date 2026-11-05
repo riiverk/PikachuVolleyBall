@@ -1,8 +1,8 @@
 #include "RoomManager.h"
 #include "Room.h"
 
-RoomManager::RoomManager() = default;
-RoomManager::~RoomManager() = default;
+RoomManager::RoomManager() { InitializeCriticalSection(&csRooms_); }
+RoomManager::~RoomManager() { DeleteCriticalSection(&csRooms_); }
 Room* RoomManager::JoinRoom(int, ClientSession*, int& outIdx, std::uint8_t& outResult)
 {
     outIdx = -1;

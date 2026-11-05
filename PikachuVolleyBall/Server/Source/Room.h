@@ -2,14 +2,16 @@
 #include "Common.h"
 #include "GameWorld.h"
 #include <array>
-#include <atomic>
-#include <mutex>
 
 class ClientSession;
 
 class Room
 {
 public:
+    Room();
+    ~Room();
+    Room(const Room&) = delete;
+    Room& operator=(const Room&) = delete;
     void Start();
     static DWORD WINAPI RoomThread(LPVOID arg);
     void SetInput(int idx, std::uint8_t keys);
@@ -31,7 +33,7 @@ private:
     std::array<ClientSession*, 2> players_{};
     std::uint8_t inputs_[2]{};
     bool nextStageReady_[2]{};
-    std::mutex mutex_;
-    std::atomic_bool quitFlag_{false};
+    CRITICAL_SECTION csInput_;
+    volatile LONG quitFlag_ = 0;
     HANDLE thread_ = nullptr;
 };
