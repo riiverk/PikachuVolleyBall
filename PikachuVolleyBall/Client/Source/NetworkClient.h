@@ -21,6 +21,7 @@ public:
     bool IsConnected() const { return socket_ != INVALID_SOCKET; }
     int GetLastError() const { return lastError_; }
 private:
+    bool SendAll(const char* data, int length);
     SOCKET socket_ = INVALID_SOCKET;
     HANDLE recvThread_ = nullptr;
     bool winsockStarted_ = false;

@@ -68,25 +68,45 @@ void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
     JoinRoomPacket packet;
     packet.roomNo = roomNo;
     std::memcpy(packet.nickname, nick, length);
-    const char* bytes = reinterpret_cast<const char*>(&packet);
+    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) lastError_ = 0;
+}
+
+bool NetworkClient::SendAll(const char* data, int length)
+{
     int sent = 0;
-    while (sent < sizeof(packet))
+    while (sent < length)
     {
-        const int count = send(socket_, bytes + sent, static_cast<int>(sizeof(packet)) - sent, 0);
+        const int count = send(socket_, data + sent, length - sent, 0);
         if (count <= 0)
         {
             const int error = count == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
             Disconnect();
             lastError_ = error;
-            return;
+            return false;
         }
         sent += count;
     }
-    lastError_ = 0;
+    return true;
 }
 DWORD WINAPI NetworkClient::RecvThread(LPVOID) { return ERROR_CALL_NOT_IMPLEMENTED; }
 void NetworkClient::ProcessPacket(char*) { /* TODO 11/7 */ }
-void NetworkClient::SendInput(std::uint8_t) { /* TODO 11/5 */ }
+void NetworkClient::SendInput(std::uint8_t keys)
+{
+    if (!IsConnected())
+    {
+        lastError_ = WSAENOTCONN;
+        return;
+    }
+    constexpr std::uint8_t validKeys = LEFT | RIGHT | UP | ACTION;
+    if ((keys & ~validKeys) != 0)
+    {
+        lastError_ = WSAEINVAL;
+        return;
+    }
+    InputPacket packet;
+    packet.keys = keys;
+    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) lastError_ = 0;
+}
 void NetworkClient::SendChat(const char*) { /* TODO 11/23 */ }
 void NetworkClient::SendNextStage() { /* TODO 11/26 */ }
 void NetworkClient::GetLatestState(GameStatePacket& out) { out = latestState_; /* TODO 11/18 */ }
