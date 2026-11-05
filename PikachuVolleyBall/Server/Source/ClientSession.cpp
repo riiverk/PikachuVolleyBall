@@ -1,4 +1,5 @@
 #include "ClientSession.h"
+#include <cstdio>
 #include <cstring>
 
 ClientSession::ClientSession(SOCKET socket) : socket_(socket)
@@ -39,6 +40,7 @@ void ClientSession::Stop()
     EnterCriticalSection(&stateLock_);
     stopping_ = true;
     LeaveCriticalSection(&stateLock_);
+    CloseSocket();
     if (thread_ != nullptr)
     {
         if (GetCurrentThreadId() != threadId_) WaitForSingleObject(thread_, INFINITE);
@@ -56,6 +58,9 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
     char buffer[MAX_PACKET_SIZE]{};
     while (!session->IsStopping() && session->RecvPacket(buffer))
     {
+        const PacketHeader* header = reinterpret_cast<const PacketHeader*>(buffer);
+        std::printf("[session %lu] recv type=%u size=%u\n", GetCurrentThreadId(),
+            static_cast<unsigned>(header->type), static_cast<unsigned>(header->size));
         session->ProcessPacket(buffer);
         EnterCriticalSection(&session->stateLock_);
         ++session->receivedCount_;
@@ -76,17 +81,11 @@ bool ClientSession::RecvPacket(char* buf)
     const SOCKET socket = GetSocket();
     if (socket == INVALID_SOCKET)
     {
-        SetError(WSAENOTSOCK);
+        SetError(IsStopping() ? 0 : WSAENOTSOCK);
         return false;
     }
     PacketHeader header{};
-    const int count = ReceiveBytes(socket, reinterpret_cast<char*>(&header), sizeof(header));
-    if (count != sizeof(header))
-    {
-        const int error = count == SOCKET_ERROR ? WSAGetLastError() : count == 0 ? 0 : WSAECONNRESET;
-        SetError(IsStopping() ? 0 : error);
-        return false;
-    }
+    if (!ReceiveExact(socket, reinterpret_cast<char*>(&header), sizeof(header), true)) return false;
     if (header.size < sizeof(header) || header.size > MAX_PACKET_SIZE)
     {
         SetError(WSAEMSGSIZE);
@@ -98,14 +97,8 @@ bool ClientSession::RecvPacket(char* buf)
         return false;
     }
     std::memcpy(buf, &header, sizeof(header));
-    const int remaining = header.size - sizeof(header);
-    const int received = ReceiveBytes(socket, buf + sizeof(header), remaining);
-    if (received != remaining)
-    {
-        const int error = received == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
-        SetError(IsStopping() ? 0 : error);
-        return false;
-    }
+    const int remaining = header.size - static_cast<int>(sizeof(header));
+    if (!ReceiveExact(socket, buf + sizeof(header), remaining, false)) return false;
     SetError(0);
     return true;
 }
@@ -139,35 +132,15 @@ SOCKET ClientSession::GetSocket() const
     return socket;
 }
 
-int ClientSession::ReceiveBytes(SOCKET socket, char* buffer, int length)
+bool ClientSession::ReceiveExact(SOCKET socket, char* buffer, int length, bool atPacketStart)
 {
-    int received = 0;
-    while (received < length)
-    {
-        if (IsStopping())
-        {
-            WSASetLastError(WSAESHUTDOWN);
-            return SOCKET_ERROR;
-        }
-        // Keep ownership in the receive thread. A short select wait permits
-        // cancellation even while only part of a TCP packet has arrived.
-        fd_set readable;
-        FD_ZERO(&readable);
-        FD_SET(socket, &readable);
-        timeval timeout{0, 100000};
-        const int ready = select(0, &readable, nullptr, nullptr, &timeout);
-        if (ready == SOCKET_ERROR) return SOCKET_ERROR;
-        if (ready == 0) continue;
-        const int count = recv(socket, buffer + received, length - received, 0);
-        if (count == SOCKET_ERROR)
-        {
-            if (WSAGetLastError() == WSAEINTR) continue;
-            return SOCKET_ERROR;
-        }
-        if (count == 0) return received;
-        received += count;
-    }
-    return received;
+    const int count = recvn(socket, buffer, length, 0);
+    if (count == length) return true;
+    int error = WSAECONNRESET;
+    if (count == SOCKET_ERROR) error = WSAGetLastError();
+    else if (count == 0 && atPacketStart) error = 0;
+    SetError(IsStopping() ? 0 : error);
+    return false;
 }
 
 bool ClientSession::IsStopping() const
@@ -190,6 +163,7 @@ void ClientSession::CloseSocket()
     EnterCriticalSection(&stateLock_);
     if (socket_ != INVALID_SOCKET)
     {
+        shutdown(socket_, SD_BOTH);
         closesocket(socket_);
         socket_ = INVALID_SOCKET;
     }

@@ -23,7 +23,7 @@ public:
     void Disconnect();
 private:
     SOCKET GetSocket() const;
-    int ReceiveBytes(SOCKET socket, char* buffer, int length);
+    bool ReceiveExact(SOCKET socket, char* buffer, int length, bool atPacketStart);
     bool IsStopping() const;
     void SetError(DWORD error);
     void CloseSocket();
