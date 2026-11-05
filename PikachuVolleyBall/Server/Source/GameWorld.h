@@ -22,13 +22,17 @@ public:
     bool IsStageOver();
     int GetLoser();
 private:
+    void StartSlides();
     void MovePlayers();
     void JumpPlayers();
+    void SlidePlayers();
     GameStatePacket state_{};
     std::vector<GameEvent> events_;
     std::uint8_t previousInputs_[2]{};
     std::array<PlayerInput, 2> playerInputs_{};
     int velocityY_[2]{};
+    int slideCount_[2]{};
+    int slideDirection_[2]{};
     std::uint8_t scores_[2]{};
     int stage_ = 1;
     int serveSide_ = 0;

@@ -15,9 +15,23 @@ void GameWorld::Reset(int, int) { /* TODO 11/10: initialize stage and serve. */ 
 void GameWorld::Update(const std::uint8_t inputs[2])
 {
     ApplyInputs(inputs);
+    StartSlides();
     MovePlayers();
     JumpPlayers();
+    SlidePlayers();
     /* TODO 11/11: integrate ball physics and scoring into the tick. */
+}
+
+void GameWorld::StartSlides()
+{
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+        StartPlayerSlide(state_.p[i], playerInputs_[i], slideCount_[i], slideDirection_[i]);
+}
+
+void GameWorld::SlidePlayers()
+{
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+        UpdatePlayerSlide(state_.p[i], i, slideCount_[i], slideDirection_[i]);
 }
 
 void GameWorld::MovePlayers()
