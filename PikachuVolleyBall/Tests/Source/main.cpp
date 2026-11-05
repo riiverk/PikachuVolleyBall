@@ -572,6 +572,95 @@ void PlayerInputTest()
     std::cout << "PASS: move/jump/slide/spike input, press edges, action locks and independent players\n";
 }
 
+void SlideTest()
+{
+    GameWorld world;
+    GameStatePacket state;
+    std::uint8_t keys[2] = {RIGHT | ACTION, 0};
+    world.Update(keys);
+    world.FillState(state);
+    Check(state.p[0].action == Action::Slide && state.p[0].x == 44 && state.p[0].y == 557,
+          "slide starts on ACTION press with a direction and moves 14px without walking");
+    int ticks = 1, minimumY = state.p[0].y;
+    while (state.p[0].action == Action::Slide && ticks < 60)
+    {
+        world.Update(keys);
+        world.FillState(state);
+        minimumY = std::min(minimumY, static_cast<int>(state.p[0].y));
+        ++ticks;
+    }
+    Check(ticks == 41 && state.p[0].action == Action::Idle, "slide lasts 40 moving ticks plus the ending tick");
+    Check(state.p[0].x == 30 + 15 * 14 + 9 * 7 && state.p[0].y == 560 && minimumY == 530,
+          "original slide distance, 30px lift and landing");
+    world.Update(keys);
+    world.FillState(state);
+    Check(state.p[0].x == 313 && state.p[0].action == Action::Move, "held direction walks again; held ACTION does not slide again");
+
+    GameWorld wall;
+    keys[0] = LEFT | ACTION; keys[1] = RIGHT | ACTION;
+    for (int tick = 0; tick < 41; ++tick) wall.Update(keys);
+    wall.FillState(state);
+    Check(state.p[0].x == -12 && state.p[1].x == 992, "wall check happens before each step, as in the original");
+
+    GameWorld locked;
+    keys[0] = RIGHT | ACTION; keys[1] = 0;
+    locked.Update(keys);
+    keys[0] = RIGHT | ACTION | UP;
+    for (int tick = 0; tick < 40; ++tick) locked.Update(keys);
+    locked.FillState(state);
+    Check(state.p[0].y == 560 && state.p[0].action == Action::Idle, "jump pressed during a slide is ignored");
+    keys[0] = 0; locked.Update(keys);
+    keys[0] = ACTION; locked.Update(keys); locked.FillState(state);
+    Check(state.p[0].action != Action::Slide, "ACTION without a direction does not slide");
+    keys[0] = UP; locked.Update(keys);
+    keys[0] = UP | RIGHT | ACTION; locked.Update(keys); locked.FillState(state);
+    Check(state.p[0].action != Action::Slide && state.p[0].y < 560, "no slide while airborne");
+    std::cout << "PASS: slide timing/distance/height, wall rule, walk resume and action locks\n";
+}
+
+void InputSendTest()
+{
+    NetworkClient client;
+    client.SendInput(LEFT);
+    Check(client.GetLastError() == WSAENOTCONN, "input requires a connected socket");
+    Socket listener;
+    listener.value = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    Check(bind(listener.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "bind input receiver");
+    Check(listen(listener.value, 1) == 0, "listen for input");
+    int length = sizeof(address);
+    Check(getsockname(listener.value, reinterpret_cast<sockaddr*>(&address), &length) == 0, "input receiver port");
+    Check(client.Connect("127.0.0.1", ntohs(address.sin_port)), "connect input client");
+    Socket receiver;
+    receiver.value = accept(listener.value, nullptr, nullptr);
+    Check(receiver.value != INVALID_SOCKET, "accept input client");
+    const DWORD timeout = 2000;
+    setsockopt(receiver.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+
+    client.SendInput(LEFT | ACTION);
+    Check(client.GetLastError() == 0, "send input");
+    std::array<unsigned char, 4> bytes{};
+    Check(recvn(receiver.value, reinterpret_cast<char*>(bytes.data()), 4) == 4, "receive INPUT frame");
+    Check(bytes == std::array<unsigned char, 4>{4, 0, 2, LEFT | ACTION}, "INPUT wire bytes");
+    client.SendInput(0x10);
+    Check(client.GetLastError() == WSAEINVAL && client.IsConnected(), "unknown key bits are rejected without sending");
+    client.SendInput(0);
+    Check(recvn(receiver.value, reinterpret_cast<char*>(bytes.data()), 4) == 4 &&
+          bytes == std::array<unsigned char, 4>{4, 0, 2, 0}, "all keys released is sent as 0");
+
+    ClientSession session(std::exchange(receiver.value, INVALID_SOCKET));
+    Check(session.Start(), "start session for client frames");
+    client.SendJoinRoom(7, "pika");
+    client.SendInput(RIGHT);
+    client.SendInput(RIGHT | UP);
+    WaitUntil([&] { return session.GetReceivedCount() == 3; }, "session receives JOIN_ROOM and two INPUT frames");
+    client.Disconnect();
+    Check(session.WaitForFinish(2000) && session.GetLastError() == 0, "client close ends the session cleanly");
+    std::cout << "PASS: INPUT wire bytes, key validation and client-to-session delivery\n";
+}
+
 void LinkScaffolds()
 {
     // Exercise declarations from each module so missing definitions fail linking.
@@ -629,7 +718,7 @@ int main()
     {
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
-        JumpTest(); SessionThreadTest(); JoinRoomSendTest(); LinkScaffolds();
+        JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
