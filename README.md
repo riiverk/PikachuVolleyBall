@@ -1,6 +1,6 @@
 # PikachuVolleyBall
 
-네트워크 게임 프로그래밍 3팀 텀 프로젝트. 공통 프로토콜, TCP 접속·수락·수신, 방 입장 요청 전송, 키 입력 처리와 서버의 이동·점프를 구현했다.
+네트워크 게임 프로그래밍 3팀 텀 프로젝트. 공통 프로토콜, 양방향 TCP 송수신, 키 입력·방 입장 요청 전송, 서버의 캐릭터 이동과 공의 중력 이동을 구현했다.
 
 ## 열기와 실행
 
@@ -10,7 +10,7 @@
 - 실행 파일은 `PikachuVolleyBall/bin/x64/Debug/Client/Client.exe`에 생성된다. `Resources`도 자동 복사하고 실행 시 실행 파일 위치에서 리소스를 찾으므로 다른 작업 디렉터리에서 시작해도 된다.
 - 현재 Client는 기존 **로컬 2인 게임**으로 실행된다. 1P는 R(점프), D/G(좌우), Z(스파이크/슬라이딩), 2P는 방향키와 Enter를 사용한다.
 - `Server.exe`는 TCP 포트 9000에서 메인 스레드가 접속을 수락하며, 콘솔에서 Enter를 누르면 종료한다. `Server.exe --check`는 임시 포트로 접속·세션 스레드 생성·종료까지 확인한다. 점검 모드에서만 테스트 클라이언트를 보조 스레드로 실행하고, 접속 수락은 동일하게 메인 스레드에서 수행한다. 세션별 패킷 수신은 연결했으며 방 배정과 패킷별 게임 처리는 후속 일정이다.
-- `NetworkClient::Connect`는 IPv4 주소로 TCP 연결을 맺는다. 현재 접속 화면에는 연결하지 않았으며 수신 스레드 시작은 수신 루프를 구현하는 일정에 맞춰 추가한다.
+- `NetworkClient::Connect`는 IPv4 주소로 TCP 연결을 맺고 CreateThread로 수신 스레드를 시작한다. 현재 접속 화면에는 연결하지 않았으며 패킷별 화면·상태 반영은 후속 일정이다.
 
 ## 구조
 
@@ -38,7 +38,7 @@ Tools/Build.ps1
 | 정진영 | 11/1 | GameWorld·GameEvent 헤더 및 빈 함수 |
 | 김경준 | 11/1 | NetworkClient·InputManager·GameClient·Renderer 헤더 및 빈 함수 |
 
-나머지 빈 함수에는 이후 구현 일정의 TODO를 표시했다. `SendPacket` 등은 구현 전까지 `false`, 클라이언트 RecvThread·RoomThread는 `ERROR_CALL_NOT_IMPLEMENTED`를 반환한다. 온라인 UI 전환과 공 물리·득점은 아직 연결하지 않았다.
+나머지 빈 함수에는 이후 구현 일정의 TODO를 표시했다. RoomThread는 아직 `ERROR_CALL_NOT_IMPLEMENTED`를 반환한다. 온라인 UI 전환과 공 충돌·득점은 아직 연결하지 않았다.
 
 ## 11/2 작업 범위
 
@@ -48,7 +48,7 @@ Tools/Build.ps1
 | 정진영 | 키 입력을 이동·점프·슬라이딩·스파이크 요청으로 변환, 눌림·유지·뗌 구분 |
 | 김경준 | NetworkClient::Connect의 IPv4 TCP 연결과 실패 후 재시도 |
 
-초기화와 접속을 테스트할 수 있도록 소멸자와 소켓 정리도 함께 구현했다. 중복 초기화·중복 접속은 기존 연결을 보존하고 실패하며 `GetLastError()`로 Winsock 오류를 확인한다. 서버의 `GetPort()`는 실제 바인딩한 포트이며 0으로 초기화하면 빈 포트를 자동 배정받는다. `IsConnected()`는 로컬 소켓 연결 여부로, 상대의 종료 감지는 수신 루프 구현 시 추가한다. 연결·종료 함수는 현재 동일한 제어 스레드에서 호출한다.
+초기화와 접속을 테스트할 수 있도록 소멸자와 소켓 정리도 함께 구현했다. 중복 초기화·중복 접속은 기존 연결을 보존하고 실패하며 `GetLastError()`로 Winsock 오류를 확인한다. 서버의 `GetPort()`는 실제 바인딩한 포트이며 0으로 초기화하면 빈 포트를 자동 배정받는다. `IsConnected()`는 소켓 연결 여부이고 서버의 EOF·수신 오류도 수신 스레드에서 반영한다. Connect·Disconnect·WaitForReceiveEnd는 동일한 제어 스레드에서 순서대로 호출한다.
 
 `GameWorld::Update`는 `ApplyInputs`로 두 플레이어의 입력을 해석하고 좌우 이동과 점프를 갱신한다. `GetPlayerInput(index)`에서 이동 방향과 동작 요청을 얻으며 공 물리·애니메이션은 후속 일정에서 갱신한다. 좌우 동시 입력은 상쇄되고, 점프·액션은 새로 누른 순간만 요청한다. 슬라이딩·승패 동작 중에는 다른 동작 요청을 막는다. 공중 액션은 스파이크, 지상에서 방향+액션은 슬라이딩으로 변환한다.
 
@@ -76,7 +76,7 @@ InputManager는 왼쪽·오른쪽·위쪽 방향키와 Z를 각각 LEFT·RIGHT·
 
 참고 자료는 `네트워크게임프로그래밍_시험정리.pdf` Ch5(13·15쪽), Ch6(16~19쪽)와 `네트워크게임프로그래밍_이론정리.pdf` Ch5·Ch6이다. 강의자료의 클라이언트별 CreateThread·LPVOID 인수·반복 수신·소켓 종료 구조를 적용한다. 메인 스레드의 accept와 Win32 임계 영역은 계획서 및 기존 수정 사항을 따른다.
 
-ClientThread는 LPVOID로 받은 세션에서 패킷을 반복 수신하고 ProcessPacket으로 넘긴다. 정상 EOF, 수신 오류 또는 종료 요청이 오면 스레드가 소켓을 닫고 리턴한다. `Stop()`은 종료 플래그를 설정하고 WaitForSingleObject로 종료를 기다린 뒤 핸들을 닫는다. 부분 패킷을 기다리는 중에도 종료할 수 있도록 수신 준비를 최대 100ms씩 확인한다. 상태와 수신 횟수는 CRITICAL_SECTION으로 보호한다. Start·Stop·WaitForFinish는 세션 소유 스레드에서 순서대로 호출한다.
+ClientThread는 LPVOID로 받은 세션에서 패킷을 반복 수신하고 ProcessPacket으로 넘긴다. 정상 EOF, 수신 오류 또는 종료 요청이 오면 스레드가 소켓을 닫고 리턴한다. `Stop()`은 종료 플래그를 설정하고 소켓을 닫아 수신 대기를 취소한 뒤 WaitForSingleObject로 종료를 기다리고 핸들을 닫는다. 11/5부터 수신에는 아래의 공용 recvn 방식을 사용한다. 상태와 수신 횟수는 CRITICAL_SECTION으로 보호한다. Start·Stop·WaitForFinish는 세션 소유 스레드에서 순서대로 호출한다.
 
 수신 스레드의 실제 실행에 필요한 RecvPacket 기본 처리를 함께 연결했다. TCP 메시지 경계를 헤더와 본문으로 구분하되 계획서의 `uint16_t size + uint8_t type` 3바이트 헤더와 패킷별 크기를 우선한다. 짧게 도착한 데이터는 누적하고 범위를 벗어난 크기·알 수 없는 타입·타입별 크기 불일치·중간 종료는 실패로 처리한다. ProcessPacket의 방 입장·입력 분기와 Disconnect의 방 이탈 알림은 후속 일정이다.
 
@@ -97,6 +97,22 @@ RecvPacket은 세션 전용 select 대기 대신 Common의 `recvn`을 쓴다. �
 슬라이딩은 지상에서 방향키를 누른 채 ACTION을 누르는 순간 시작한다. 40틱 동안 처음 10틱은 3px씩 오르고 14틱은 2px씩 내려온 뒤 바닥에 붙으며, 15틱은 14px, 9틱은 7px 이동한다. 슬라이딩 중에는 걷기·점프·새 슬라이딩 입력을 받지 않고, 끝난 다음 틱부터 누르고 있던 방향으로 다시 걷는다.
 
 SendInput은 LEFT·RIGHT·UP·ACTION 비트만 허용하고 4바이트 INPUT 패킷을 보낸다. 다른 비트가 있으면 보내지 않고 오류로 기록한다.
+
+## 11/6 작업 범위
+
+| 담당 | 완료 내용 |
+|---|---|
+| 강석주 | ClientSession::SendPacket의 패킷 검증·전체 전송과 동시 송신 직렬화 |
+| 정진영 | 공의 서브 초기화와 중력·속도를 반영한 위치 갱신 |
+| 김경준 | Connect에서 RecvThread 생성, 서버 패킷 반복 수신·종료·재접속 정리 |
+
+강의자료 Ch4의 send/recv와 부분 송수신, Ch5의 메시지 경계 구분, Ch6의 CreateThread·LPVOID·CRITICAL_SECTION·WaitForSingleObject를 따른다. 패킷은 계획서의 3바이트 헤더와 기존 구조체 크기를 유지하고 수신에는 Common의 recvn을 사용한다.
+
+SendPacket은 전달받은 버퍼 길이·헤더 size·타입별 크기가 맞는지 확인한 뒤 남은 바이트까지 전송한다. 세션별 송신 임계 영역은 패킷 전체에 걸쳐 잡아 여러 송신자의 바이트가 섞이지 않게 한다. 전송 오류가 발생하면 연결을 정리하고 오류를 기록한다. 잘못된 인자는 데이터를 보내지 않고 false를 반환한다.
+
+GameWorld 생성 시 공은 왼쪽 서브 위치 x=120, y=0, vx=0, vy=400으로 초기화된다. ResetBall(0/1)은 왼쪽·오른쪽 서브 위치와 속도·스파이크 상태만 초기화한다. UpdateBall은 원본과 동일하게 중력을 속도에 먼저 더하고 위치를 갱신하며 TickSeconds=0.016과 BallTimeScale=2.3을 사용한다. GameWorld::Update에서 틱마다 호출한다. 벽·천장·네트·플레이어 충돌과 득점은 후속 일정이다.
+
+NetworkClient는 접속 직후 별도의 수신 스레드를 시작한다. 헤더와 본문을 누적 수신하고 패킷 크기·타입을 확인한 뒤 ProcessPacket으로 넘긴다. 정상 EOF·잘못된 패킷·수신 오류 시 연결을 닫고, 소켓과 오류·수신 횟수는 Win32 임계 영역으로 보호한다. Disconnect는 대기 중인 recvn을 소켓 종료로 취소하고 스레드 핸들 및 Winsock 참조를 정리한다. 재접속 전에 이전 스레드가 끝나기를 기다려 새 소켓과 수신 상태가 섞이지 않게 한다. ProcessPacket의 상태 저장·UI 이벤트 분기는 11/7 일정이므로 아직 빈 함수이며 GetReceivedCount는 해당 함수로 전달한 완전한 패킷 수만 뜻한다.
 
 ## 공통 프로토콜
 
@@ -143,3 +159,5 @@ Client.exe 실행 후 `Pikachu_VolleyBall` 창 생성과 프로세스 응답을 
 2026-11-03 검증: x64 Debug·Release와 Win32 Debug의 빌드·테스트를 통과했다. 구성별로 36개 세션의 수락·정리, 반복 서버 시작·종료, 대기 중 종료, 동시 종료 호출과 핸들 누수를 검사했다. 좌우 이동·경계·각성 속도·동작 제한, 키 반복·해제·조합·Reset 및 InputManager에서 GameWorld로 이어지는 이동도 검증했다. 기본 Server.exe를 따로 실행해 포트 9000에서 클라이언트 3개가 수락되고 Enter 입력 후 정상 종료되는 것을 확인했다.
 
 2026-11-04 검증: x64 Debug·Release와 Win32 Debug의 빌드 및 전체 테스트를 통과했다. 실제 세션 스레드에서 조각난 헤더·연속 패킷·정상 EOF·잘못된 길이/타입·중간 종료·수신 취소를 검사했다. 점프의 최고점·중력·착지·좌우 이동·공중 재점프 제한·플레이어별 속도를 확인했고, 실제 TCP 연결에서 JOIN_ROOM의 23바이트 헤더·방 번호·UTF-8 닉네임·최대 길이와 잘못된 요청의 미전송을 검증했다. Server.exe --check의 메인 접속 수락·세션 생성·정상 종료도 세 구성에서 통과했다.
+
+11/6 범위 검증(2026-11-07 실행): x64 Debug·Release와 Win32 Debug의 빌드, Server.exe --check 및 전체 Tests.exe를 통과했다. SendPacket의 잘못된 버퍼·헤더 거부, 두 송신자의 200개 패킷 전달, 실제 NetworkClient↔ClientSession의 JOIN/INPUT/START/STATE/SCORE 양방향 통신을 검사했다. 클라이언트 수신 스레드의 조각난 헤더·연속 패킷·정상 EOF·잘못된 길이/타입·중간 종료와 8회 재접속·부분 수신 중 취소·핸들 정리도 통과했다. 공은 좌우 서브 초기화·한 틱 및 누적 중력·수평 이동·상승에서 하강 전환·잔여 속도 초기화를 확인했다.

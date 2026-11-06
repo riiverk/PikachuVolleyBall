@@ -3,9 +3,12 @@
 #include "../../Server/Source/ClientSession.h"
 #include "../../Server/Source/Room.h"
 #include "../../Server/Source/PlayerMovement.h"
+#include "../../Server/Source/BallPhysics.h"
 #include "../../Client/Source/GameClient.h"
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -62,6 +65,42 @@ struct Stream
         }
     }
 };
+
+struct Listener
+{
+    Socket socket;
+    u_short port = 0;
+    Listener()
+    {
+        socket.value = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        Check(socket.value != INVALID_SOCKET, "create receive-test listener");
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        Check(bind(socket.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "bind receive-test listener");
+        Check(listen(socket.value, 8) == 0, "listen for receive tests");
+        int length = sizeof(address);
+        Check(getsockname(socket.value, reinterpret_cast<sockaddr*>(&address), &length) == 0, "get receive-test port");
+        port = ntohs(address.sin_port);
+    }
+    SOCKET Accept()
+    {
+        const SOCKET accepted = accept(socket.value, nullptr, nullptr);
+        Check(accepted != INVALID_SOCKET, "accept receive-test client");
+        return accepted;
+    }
+};
+
+void SendBytes(SOCKET socket, const char* data, int length)
+{
+    int sent = 0;
+    while (sent < length)
+    {
+        const int count = send(socket, data + sent, length - sent, 0);
+        Check(count > 0, "send test bytes");
+        sent += count;
+    }
+}
 
 template<class T> void CheckPacket(PacketType type)
 {
@@ -661,6 +700,169 @@ void InputSendTest()
     std::cout << "PASS: INPUT wire bytes, key validation and client-to-session delivery\n";
 }
 
+void SessionSendTest()
+{
+    EventPacket packet;
+    ClientSession disconnected;
+    Check(!disconnected.SendPacket(reinterpret_cast<const char*>(&packet), sizeof(packet)) &&
+          disconnected.GetLastError() == WSAENOTCONN, "session send requires a live socket");
+    Stream stream;
+    const DWORD timeout = 2000;
+    setsockopt(stream.sender.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+    Check(session.Start(), "start bidirectional session");
+    Check(!session.SendPacket(nullptr, 0) && session.GetLastError() == WSAEINVAL, "null send rejected");
+    Check(!session.SendPacket(reinterpret_cast<const char*>(&packet), 2), "short send rejected");
+    packet.size = 4;
+    Check(!session.SendPacket(reinterpret_cast<const char*>(&packet), sizeof(packet)), "mismatched send length rejected");
+    packet.size = sizeof(packet);
+    packet.type = static_cast<PacketType>(0xff);
+    Check(!session.SendPacket(reinterpret_cast<const char*>(&packet), sizeof(packet)), "unknown send type rejected");
+
+    std::atomic_bool sent{true};
+    auto writer = [&](std::uint8_t who) {
+        EventPacket event;
+        event.kind = EventKind::Hit; event.who = who;
+        for (int i = 0; i < 100; ++i)
+            if (!session.SendPacket(reinterpret_cast<const char*>(&event), sizeof(event))) { sent = false; return; }
+    };
+    std::jthread first(writer, 0), second(writer, 1);
+    int count[2]{};
+    for (int i = 0; i < 200; ++i)
+    {
+        EventPacket received;
+        Check(recvn(stream.sender.value, reinterpret_cast<char*>(&received), sizeof(received)) == sizeof(received), "receive server frame");
+        Check(received.size == sizeof(received) && received.type == PacketType::EVENT &&
+              received.kind == EventKind::Hit && received.who < 2, "concurrent server frames must remain intact");
+        ++count[received.who];
+    }
+    first.join(); second.join();
+    Check(sent && count[0] == 100 && count[1] == 100, "deliver both concurrent writers without mixing or dropping frames");
+    InputPacket input; input.keys = LEFT;
+    stream.Send(reinterpret_cast<const char*>(&input), sizeof(input));
+    WaitUntil([&] { return session.GetReceivedCount() == 1; }, "receive remains active while sending");
+    shutdown(stream.sender.value, SD_SEND);
+    Check(session.WaitForFinish(2000) && session.GetLastError() == 0, "sender session exits after peer EOF");
+    std::cout << "PASS: server SendPacket validation, 200 concurrent frames and bidirectional traffic\n";
+}
+
+void BallGravityTest()
+{
+    auto close = [](float actual, float expected) { return std::fabs(actual - expected) < 0.001f; };
+    GameWorld world;
+    GameStatePacket state;
+    world.FillState(state);
+    Check(state.ball.x == 120 && state.ball.y == 0 && state.ball.vx == 0 && state.ball.vy == 400 && state.ball.spike == 0,
+          "initial ball serve state");
+    std::uint8_t keys[2]{};
+    world.Update(keys); world.FillState(state);
+    Check(state.ball.vy == 416 && close(state.ball.y, 15.3088f) && state.ball.x == 120, "one tick applies gravity before movement");
+    world.Update(keys); world.FillState(state);
+    Check(state.ball.vy == 432 && close(state.ball.y, 31.2064f), "gravity accumulates over ticks");
+    world.ResetBall(1); world.FillState(state);
+    Check(state.ball.x == 980 && state.ball.y == 0 && state.ball.vy == 400, "reset for right-side serve");
+    world.ResetBall(0); world.FillState(state);
+    Check(state.ball.x == 120 && state.ball.y == 0 && state.ball.vy == 400, "reset for left-side serve");
+    bool rejected = false;
+    try { world.ResetBall(2); } catch (const std::out_of_range&) { rejected = true; }
+    world.FillState(state);
+    Check(rejected && state.ball.x == 120, "invalid serve side does not change the ball");
+    BallState ball;
+    ball.x = 10; ball.y = 100; ball.vx = 100; ball.vy = -100; ball.spike = 1;
+    MoveBallWithGravity(ball);
+    Check(close(ball.x, 13.68f) && close(ball.y, 96.9088f) && ball.vy == -84, "horizontal velocity and upward gravity");
+    for (int tick = 0; tick < 6; ++tick) MoveBallWithGravity(ball);
+    Check(ball.vy == 12, "gravity changes ascent to descent");
+    ResetBallForServe(ball, 1);
+    Check(ball.x == 980 && ball.y == 0 && ball.vx == 0 && ball.vy == 400 && ball.spike == 0, "serve reset clears old velocity and spike");
+    std::cout << "PASS: ball serve reset, gravity, accumulated motion and original time scale\n";
+}
+
+void ClientReceiveTest()
+{
+    Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
+    Listener listener;
+    NetworkClient client;
+    Check(client.Connect("127.0.0.1", listener.port), "connect receiving client");
+    Socket server; server.value = listener.Accept();
+    Check(!client.WaitForReceiveEnd(30), "client receiver waits for data");
+    GameStartPacket start;
+    GameStatePacket state; state.tick = 24;
+    ScorePacket score; score.scorer = 1; score.score[1] = 3;
+    const char* bytes = reinterpret_cast<const char*>(&start);
+    SendBytes(server.value, bytes, 1);
+    Check(!client.WaitForReceiveEnd(30), "partial server header must not finish receive thread");
+    std::array<char, sizeof(start) - 1 + sizeof(state) + sizeof(score)> rest{};
+    std::memcpy(rest.data(), bytes + 1, sizeof(start) - 1);
+    std::memcpy(rest.data() + sizeof(start) - 1, &state, sizeof(state));
+    std::memcpy(rest.data() + sizeof(start) - 1 + sizeof(state), &score, sizeof(score));
+    SendBytes(server.value, rest.data(), static_cast<int>(rest.size()));
+    WaitUntil([&] { return client.GetReceivedCount() == 3; }, "receive fragmented and coalesced server packets");
+    shutdown(server.value, SD_SEND);
+    Check(client.WaitForReceiveEnd(2000) && !client.IsConnected() && client.GetLastError() == 0, "server EOF closes client receive thread cleanly");
+
+    auto reject = [&](const char* data, int length, int expected) {
+        Check(client.Connect("127.0.0.1", listener.port), "reconnect after receive end");
+        Socket peer; peer.value = listener.Accept();
+        SendBytes(peer.value, data, length);
+        shutdown(peer.value, SD_SEND);
+        Check(client.WaitForReceiveEnd(2000) && !client.IsConnected(), "bad packet ends reception");
+        Check(client.GetLastError() == expected && client.GetReceivedCount() == 0, "bad server frame must not be dispatched");
+    };
+    const PacketHeader tooSmall{2, PacketType::SCORE};
+    const PacketHeader tooLarge{MAX_PACKET_SIZE + 1, PacketType::SCORE};
+    const PacketHeader unknown{3, static_cast<PacketType>(0xff)};
+    const PacketHeader mismatch{3, PacketType::SCORE};
+    reject(reinterpret_cast<const char*>(&tooSmall), sizeof(tooSmall), WSAEMSGSIZE);
+    reject(reinterpret_cast<const char*>(&tooLarge), sizeof(tooLarge), WSAEMSGSIZE);
+    reject(reinterpret_cast<const char*>(&unknown), sizeof(unknown), WSAEINVAL);
+    reject(reinterpret_cast<const char*>(&mismatch), sizeof(mismatch), WSAEINVAL);
+    reject(reinterpret_cast<const char*>(&score), 1, WSAECONNRESET);
+    reject(reinterpret_cast<const char*>(&score), sizeof(PacketHeader), WSAECONNRESET);
+    client.Disconnect();
+
+    DWORD before = 0, after = 0;
+    Check(GetProcessHandleCount(GetCurrentProcess(), &before) != 0, "client handle baseline");
+    for (int cycle = 0; cycle < 8; ++cycle)
+    {
+        Check(client.Connect("127.0.0.1", listener.port) && client.GetReceivedCount() == 0, "fresh receive connection state");
+        Socket peer; peer.value = listener.Accept();
+        SendBytes(peer.value, reinterpret_cast<const char*>(&score), 1);
+        const auto started = std::chrono::steady_clock::now();
+        client.Disconnect();
+        Check(std::chrono::steady_clock::now() - started < std::chrono::seconds(2), "disconnect cancels a partial receive without hanging");
+        Check(!client.IsConnected() && client.GetLastError() == 0, "cancelled reception preserves clean status");
+        client.Disconnect();
+    }
+    Check(GetProcessHandleCount(GetCurrentProcess(), &after) != 0 && after <= before + 2, "reconnect must not leak receive-thread/socket handles");
+    std::cout << "PASS: client receive framing/errors, EOF, partial-receive cancellation and reconnect cleanup\n";
+}
+
+void ClientSessionRoundTripTest()
+{
+    Listener listener;
+    NetworkClient client;
+    Check(client.Connect("127.0.0.1", listener.port), "round trip client connects");
+    ClientSession session(listener.Accept());
+    Check(session.Start(), "round trip server worker starts");
+    client.SendJoinRoom(9, "pika");
+    client.SendInput(LEFT | ACTION);
+    WaitUntil([&] { return session.GetReceivedCount() == 2; }, "server receives client join and input");
+    GameStartPacket start;
+    GameStatePacket state; state.tick = 42;
+    ScorePacket score; score.scorer = 0; score.score[0] = 1;
+    Check(session.SendPacket(reinterpret_cast<const char*>(&start), sizeof(start)), "send game start to client");
+    Check(session.SendPacket(reinterpret_cast<const char*>(&state), sizeof(state)), "send game state to client");
+    Check(session.SendPacket(reinterpret_cast<const char*>(&score), sizeof(score)), "send score to client");
+    WaitUntil([&] { return client.GetReceivedCount() == 3; }, "client receives all server frames");
+    client.SendInput(0);
+    WaitUntil([&] { return session.GetReceivedCount() == 3; }, "client can send while receiver runs");
+    session.Stop();
+    Check(client.WaitForReceiveEnd(2000) && client.GetLastError() == 0 && !client.IsConnected(), "server stop propagates EOF to client");
+    client.Disconnect();
+    std::cout << "PASS: real client/session bidirectional JOIN/INPUT/START/STATE/SCORE exchange\n";
+}
+
 void LinkScaffolds()
 {
     // Exercise declarations from each module so missing definitions fail linking.
@@ -718,7 +920,8 @@ int main()
     {
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
-        JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest(); LinkScaffolds();
+        JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
+        SessionSendTest(); BallGravityTest(); ClientReceiveTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
