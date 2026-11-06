@@ -32,6 +32,7 @@ private:
     DWORD threadId_ = 0;
     DWORD lastError_ = 0;
     mutable CRITICAL_SECTION stateLock_;
+    CRITICAL_SECTION sendLock_;
     bool stopping_ = false;
     std::size_t receivedCount_ = 0;
     Room* room_ = nullptr;

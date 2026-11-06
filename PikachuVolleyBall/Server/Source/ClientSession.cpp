@@ -5,11 +5,13 @@
 ClientSession::ClientSession(SOCKET socket) : socket_(socket)
 {
     InitializeCriticalSection(&stateLock_);
+    InitializeCriticalSection(&sendLock_);
 }
 
 ClientSession::~ClientSession()
 {
     Stop();
+    DeleteCriticalSection(&sendLock_);
     DeleteCriticalSection(&stateLock_);
 }
 
@@ -49,6 +51,8 @@ void ClientSession::Stop()
         threadId_ = 0;
     }
     CloseSocket();
+    EnterCriticalSection(&sendLock_);
+    LeaveCriticalSection(&sendLock_);
 }
 
 DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
@@ -139,7 +143,7 @@ bool ClientSession::ReceiveExact(SOCKET socket, char* buffer, int length, bool a
     int error = WSAECONNRESET;
     if (count == SOCKET_ERROR) error = WSAGetLastError();
     else if (count == 0 && atPacketStart) error = 0;
-    SetError(IsStopping() ? 0 : error);
+    if (!IsStopping()) SetError(error);
     return false;
 }
 
@@ -154,7 +158,7 @@ bool ClientSession::IsStopping() const
 void ClientSession::SetError(DWORD error)
 {
     EnterCriticalSection(&stateLock_);
-    lastError_ = error;
+    if (error != 0 || !stopping_) lastError_ = error;
     LeaveCriticalSection(&stateLock_);
 }
 
@@ -171,5 +175,54 @@ void ClientSession::CloseSocket()
 }
 
 void ClientSession::ProcessPacket(char*) { /* TODO 11/8 */ }
-bool ClientSession::SendPacket(const char*, int) { return false; /* TODO 11/6 */ }
+bool ClientSession::SendPacket(const char* buf, int len)
+{
+    if (buf == nullptr || len < static_cast<int>(sizeof(PacketHeader)) || len > MAX_PACKET_SIZE)
+    {
+        SetError(WSAEINVAL);
+        return false;
+    }
+    PacketHeader header;
+    std::memcpy(&header, buf, sizeof(header));
+    if (header.size != len || PacketSize(header.type) != len)
+    {
+        SetError(WSAEINVAL);
+        return false;
+    }
+    // A room worker and a session worker may send to the same socket.
+    // Hold the send lock across the whole frame so their bytes do not mix.
+    EnterCriticalSection(&sendLock_);
+    int sent = 0;
+    int error = 0;
+    while (sent < len)
+    {
+        const SOCKET socket = GetSocket();
+        if (IsStopping() || socket == INVALID_SOCKET)
+        {
+            error = WSAENOTCONN;
+            break;
+        }
+        const int count = send(socket, buf + sent, len - sent, 0);
+        if (count == SOCKET_ERROR && WSAGetLastError() == WSAEINTR) continue;
+        if (count <= 0)
+        {
+            error = count == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
+            EnterCriticalSection(&stateLock_);
+            stopping_ = true;
+            lastError_ = error;
+            LeaveCriticalSection(&stateLock_);
+            break;
+        }
+        sent += count;
+    }
+    LeaveCriticalSection(&sendLock_);
+    if (error != 0)
+    {
+        SetError(error);
+        if (error != WSAENOTCONN) CloseSocket();
+        return false;
+    }
+    SetError(0);
+    return true;
+}
 void ClientSession::Disconnect() { /* TODO 11/7 */ }
