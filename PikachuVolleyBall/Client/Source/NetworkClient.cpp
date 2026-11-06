@@ -1,28 +1,42 @@
 #include "NetworkClient.h"
 #include <cstring>
 
-NetworkClient::~NetworkClient() { Disconnect(); }
+NetworkClient::NetworkClient()
+{
+    InitializeCriticalSection(&stateLock_);
+    InitializeCriticalSection(&sendLock_);
+}
+
+NetworkClient::~NetworkClient()
+{
+    Disconnect();
+    DeleteCriticalSection(&sendLock_);
+    DeleteCriticalSection(&stateLock_);
+}
 
 bool NetworkClient::Connect(const char* ip, u_short port)
 {
     if (IsConnected())
     {
-        lastError_ = WSAEISCONN;
+        SetError(WSAEISCONN);
         return false;
     }
+    // Reap the previous receive thread before a new connection can reuse its socket.
+    Disconnect();
     if (ip == nullptr || *ip == '\0' || port == 0)
     {
-        lastError_ = WSAEINVAL;
+        SetError(WSAEINVAL);
         return false;
     }
     WSADATA data{};
-    lastError_ = WSAStartup(MAKEWORD(2, 2), &data);
-    if (lastError_ != 0) return false;
+    const int startupError = WSAStartup(MAKEWORD(2, 2), &data);
+    SetError(startupError);
+    if (startupError != 0) return false;
     winsockStarted_ = true;
 
     auto fail = [this](int error) {
         Disconnect();
-        lastError_ = error;
+        SetError(error);
         return false;
     };
     sockaddr_in address{};
@@ -31,30 +45,36 @@ bool NetworkClient::Connect(const char* ip, u_short port)
     const int parsed = InetPtonA(AF_INET, ip, &address.sin_addr);
     if (parsed != 1) return fail(parsed == 0 ? WSAEINVAL : WSAGetLastError());
 
-    socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (socket_ == INVALID_SOCKET) return fail(WSAGetLastError());
-    if (connect(socket_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR)
-        return fail(WSAGetLastError());
-
+    const SOCKET socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket == INVALID_SOCKET) return fail(WSAGetLastError());
+    if (connect(socket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR)
     {
-        std::lock_guard<std::mutex> lock(stateMutex_);
-        latestState_ = GameStatePacket{};
+        const int error = WSAGetLastError();
+        closesocket(socket);
+        return fail(error);
     }
+
+    EnterCriticalSection(&stateLock_);
+    socket_ = socket;
+    stopping_ = false;
+    latestState_ = GameStatePacket{};
+    receivedCount_ = 0;
     lastError_ = 0;
-    // RecvThread starts with the receive loop implementation (11/6).
-    // Starting the current placeholder would immediately terminate the thread.
+    LeaveCriticalSection(&stateLock_);
+    recvThread_ = CreateThread(nullptr, 0, RecvThread, this, 0, &recvThreadId_);
+    if (recvThread_ == nullptr) return fail(static_cast<int>(::GetLastError()));
     return true;
 }
 void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
 {
     if (!IsConnected())
     {
-        lastError_ = WSAENOTCONN;
+        SetError(WSAENOTCONN);
         return;
     }
     if (roomNo <= 0 || nick == nullptr)
     {
-        lastError_ = WSAEINVAL;
+        SetError(WSAEINVAL);
         return;
     }
     int length = 0;
@@ -62,72 +82,202 @@ void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
     if (length == 0 || length == MAX_NICK ||
         MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, nick, length, nullptr, 0) == 0)
     {
-        lastError_ = WSAEINVAL;
+        SetError(WSAEINVAL);
         return;
     }
     JoinRoomPacket packet;
     packet.roomNo = roomNo;
     std::memcpy(packet.nickname, nick, length);
-    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) lastError_ = 0;
+    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) SetError(0);
 }
 
 bool NetworkClient::SendAll(const char* data, int length)
 {
+    EnterCriticalSection(&sendLock_);
     int sent = 0;
+    int error = 0;
     while (sent < length)
     {
-        const int count = send(socket_, data + sent, length - sent, 0);
+        const SOCKET socket = GetSocket();
+        if (socket == INVALID_SOCKET || IsStopping())
+        {
+            error = WSAENOTCONN;
+            break;
+        }
+        const int count = send(socket, data + sent, length - sent, 0);
+        if (count == SOCKET_ERROR && WSAGetLastError() == WSAEINTR) continue;
         if (count <= 0)
         {
-            const int error = count == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
-            Disconnect();
+            error = count == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
+            EnterCriticalSection(&stateLock_);
+            stopping_ = true;
             lastError_ = error;
-            return false;
+            LeaveCriticalSection(&stateLock_);
+            break;
         }
         sent += count;
     }
+    LeaveCriticalSection(&sendLock_);
+    if (error != 0)
+    {
+        SetError(error);
+        CloseSocket();
+        return false;
+    }
     return true;
 }
-DWORD WINAPI NetworkClient::RecvThread(LPVOID) { return ERROR_CALL_NOT_IMPLEMENTED; }
+
+DWORD WINAPI NetworkClient::RecvThread(LPVOID arg)
+{
+    NetworkClient* client = static_cast<NetworkClient*>(arg);
+    if (client == nullptr) return ERROR_INVALID_PARAMETER;
+    char buffer[MAX_PACKET_SIZE]{};
+    while (!client->IsStopping() && client->RecvPacket(buffer))
+    {
+        client->ProcessPacket(buffer);
+        EnterCriticalSection(&client->stateLock_);
+        ++client->receivedCount_;
+        LeaveCriticalSection(&client->stateLock_);
+    }
+    // The owner joins the thread and balances WSAStartup in Disconnect.
+    client->CloseSocket();
+    return static_cast<DWORD>(client->GetLastError());
+}
+
+bool NetworkClient::RecvPacket(char* buf)
+{
+    const SOCKET socket = GetSocket();
+    if (socket == INVALID_SOCKET) return false;
+    PacketHeader header{};
+    if (!ReceiveExact(socket, reinterpret_cast<char*>(&header), sizeof(header), true)) return false;
+    if (header.size < sizeof(header) || header.size > MAX_PACKET_SIZE)
+    {
+        SetError(WSAEMSGSIZE);
+        return false;
+    }
+    if (PacketSize(header.type) != header.size)
+    {
+        SetError(WSAEINVAL);
+        return false;
+    }
+    std::memcpy(buf, &header, sizeof(header));
+    const int remaining = header.size - static_cast<int>(sizeof(header));
+    if (!ReceiveExact(socket, buf + sizeof(header), remaining, false)) return false;
+    SetError(0);
+    return true;
+}
+
+bool NetworkClient::ReceiveExact(SOCKET socket, char* buffer, int length, bool atPacketStart)
+{
+    const int count = recvn(socket, buffer, length, 0);
+    if (count == length) return true;
+    const int error = count == SOCKET_ERROR ? WSAGetLastError() : (count == 0 && atPacketStart ? 0 : WSAECONNRESET);
+    if (!IsStopping()) SetError(error);
+    return false;
+}
 void NetworkClient::ProcessPacket(char*) { /* TODO 11/7 */ }
 void NetworkClient::SendInput(std::uint8_t keys)
 {
     if (!IsConnected())
     {
-        lastError_ = WSAENOTCONN;
+        SetError(WSAENOTCONN);
         return;
     }
     constexpr std::uint8_t validKeys = LEFT | RIGHT | UP | ACTION;
     if ((keys & ~validKeys) != 0)
     {
-        lastError_ = WSAEINVAL;
+        SetError(WSAEINVAL);
         return;
     }
     InputPacket packet;
     packet.keys = keys;
-    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) lastError_ = 0;
+    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) SetError(0);
 }
 void NetworkClient::SendChat(const char*) { /* TODO 11/23 */ }
 void NetworkClient::SendNextStage() { /* TODO 11/26 */ }
-void NetworkClient::GetLatestState(GameStatePacket& out) { out = latestState_; /* TODO 11/18 */ }
+void NetworkClient::GetLatestState(GameStatePacket& out)
+{
+    EnterCriticalSection(&stateLock_);
+    out = latestState_; /* Filled by ProcessPacket when packet handling is implemented. */
+    LeaveCriticalSection(&stateLock_);
+}
 void NetworkClient::Disconnect()
 {
-    if (socket_ != INVALID_SOCKET)
-    {
-        shutdown(socket_, SD_BOTH);
-        closesocket(socket_);
-        socket_ = INVALID_SOCKET;
-    }
+    EnterCriticalSection(&stateLock_);
+    stopping_ = true;
+    LeaveCriticalSection(&stateLock_);
+    CloseSocket();
     if (recvThread_ != nullptr)
     {
-        WaitForSingleObject(recvThread_, INFINITE);
+        if (GetCurrentThreadId() != recvThreadId_) WaitForSingleObject(recvThread_, INFINITE);
         CloseHandle(recvThread_);
         recvThread_ = nullptr;
+        recvThreadId_ = 0;
     }
+    EnterCriticalSection(&sendLock_);
+    LeaveCriticalSection(&sendLock_);
     if (winsockStarted_)
     {
         WSACleanup();
         winsockStarted_ = false;
     }
     // LEAVE is sent when packet transmission and graceful exit are implemented.
+}
+
+SOCKET NetworkClient::GetSocket() const
+{
+    EnterCriticalSection(&stateLock_);
+    const SOCKET socket = socket_;
+    LeaveCriticalSection(&stateLock_);
+    return socket;
+}
+
+bool NetworkClient::IsConnected() const { return GetSocket() != INVALID_SOCKET; }
+
+bool NetworkClient::IsStopping() const
+{
+    EnterCriticalSection(&stateLock_);
+    const bool stopping = stopping_;
+    LeaveCriticalSection(&stateLock_);
+    return stopping;
+}
+
+int NetworkClient::GetLastError() const
+{
+    EnterCriticalSection(&stateLock_);
+    const int error = lastError_;
+    LeaveCriticalSection(&stateLock_);
+    return error;
+}
+
+void NetworkClient::SetError(int error)
+{
+    EnterCriticalSection(&stateLock_);
+    if (error != 0 || !stopping_) lastError_ = error;
+    LeaveCriticalSection(&stateLock_);
+}
+
+std::size_t NetworkClient::GetReceivedCount() const
+{
+    EnterCriticalSection(&stateLock_);
+    const std::size_t count = receivedCount_;
+    LeaveCriticalSection(&stateLock_);
+    return count;
+}
+
+bool NetworkClient::WaitForReceiveEnd(DWORD milliseconds) const
+{
+    return recvThread_ != nullptr && WaitForSingleObject(recvThread_, milliseconds) == WAIT_OBJECT_0;
+}
+
+void NetworkClient::CloseSocket()
+{
+    EnterCriticalSection(&stateLock_);
+    if (socket_ != INVALID_SOCKET)
+    {
+        shutdown(socket_, SD_BOTH);
+        closesocket(socket_);
+        socket_ = INVALID_SOCKET;
+    }
+    LeaveCriticalSection(&stateLock_);
 }
