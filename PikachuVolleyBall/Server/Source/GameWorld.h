@@ -6,7 +6,7 @@
 
 struct GameEvent { EventKind kind; std::uint8_t who; };
 
-// Input decoding, horizontal movement and jumping are implemented; ball physics follows.
+// Movement and ball gravity are implemented; collisions and scoring follow.
 class GameWorld
 {
 public:
@@ -16,6 +16,7 @@ public:
     void ApplyInputs(const std::uint8_t inputs[2]);
     const PlayerInput& GetPlayerInput(int index) const;
     void UpdateBall();
+    void ResetBall(int serveSide);
     void CheckScore();
     void FillState(GameStatePacket& out);
     std::vector<GameEvent> PopEvents();

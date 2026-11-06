@@ -33,6 +33,9 @@
     <ClInclude Include="Source\ClientSession.h">
       <Filter>Headers</Filter>
     </ClInclude>
+    <ClInclude Include="Source\BallPhysics.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
     <ClInclude Include="Source\PlayerMovement.h">
       <Filter>Headers</Filter>
     </ClInclude>

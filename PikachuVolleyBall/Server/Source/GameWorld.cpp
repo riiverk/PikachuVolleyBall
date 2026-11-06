@@ -1,5 +1,6 @@
 #include "GameWorld.h"
 #include "PlayerMovement.h"
+#include "BallPhysics.h"
 #include <stdexcept>
 
 GameWorld::GameWorld()
@@ -9,6 +10,7 @@ GameWorld::GameWorld()
         state_.p[i].x = GameConst::PlayerStartX[i];
         state_.p[i].y = GameConst::PlayerGroundY;
     }
+    ResetBall(0);
 }
 
 void GameWorld::Reset(int, int) { /* TODO 11/10: initialize stage and serve. */ }
@@ -19,7 +21,8 @@ void GameWorld::Update(const std::uint8_t inputs[2])
     MovePlayers();
     JumpPlayers();
     SlidePlayers();
-    /* TODO 11/11: integrate ball physics and scoring into the tick. */
+    UpdateBall();
+    /* TODO 11/11: integrate collisions and scoring into the tick. */
 }
 
 void GameWorld::StartSlides()
@@ -60,7 +63,13 @@ const PlayerInput& GameWorld::GetPlayerInput(int index) const
 {
     return playerInputs_.at(index);
 }
-void GameWorld::UpdateBall() { /* TODO 11/12: ball physics. */ }
+void GameWorld::ResetBall(int serveSide)
+{
+    ResetBallForServe(state_.ball, serveSide);
+    serveSide_ = serveSide;
+}
+
+void GameWorld::UpdateBall() { MoveBallWithGravity(state_.ball); }
 void GameWorld::CheckScore() { /* TODO 11/13: scoring. */ }
 void GameWorld::FillState(GameStatePacket& out) { out = state_; /* TODO 11/15 */ }
 std::vector<GameEvent> GameWorld::PopEvents() { return {}; /* TODO 11/18 */ }

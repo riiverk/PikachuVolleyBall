@@ -155,6 +155,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\ClientSession.h" />
+    <ClInclude Include="Source\BallPhysics.h" />
     <ClInclude Include="Source\PlayerMovement.h" />
     <ClInclude Include="Source\PlayerInput.h" />
     <ClInclude Include="Source\GameWorld.h" />
