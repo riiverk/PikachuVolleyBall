@@ -98,6 +98,22 @@ RecvPacket은 세션 전용 select 대기 대신 Common의 `recvn`을 쓴다. �
 
 SendInput은 LEFT·RIGHT·UP·ACTION 비트만 허용하고 4바이트 INPUT 패킷을 보낸다. 다른 비트가 있으면 보내지 않고 오류로 기록한다.
 
+## 11/6 작업 범위
+
+| 담당 | 완료 내용 |
+|---|---|
+| 강석주 | ClientSession::SendPacket, 송신 임계 영역(csSend) |
+
+SendPacket은 패킷 전체를 보낼 때까지 send를 반복하고, 실패하면 false를 돌려준다. 한 소켓에 여러 스레드(RoomThread의 상태·이벤트 송신, 상대 ClientThread의 채팅 중계, 자기 ClientThread의 입장 응답)가 보낼 수 있으므로 반복 전체를 `csSend`로 감싸 패킷 바이트가 섞이지 않게 한다. 송신 실패 시 세션 종료 처리는 11/25 일정이다.
+
+## 11/7 작업 범위
+
+| 담당 | 완료 내용 |
+|---|---|
+| 강석주 | ClientSession::Disconnect, 한 번만 실행되는 연결 종료 |
+
+Disconnect는 소켓을 닫고, 방에 들어가 있으면 Room::OnPlayerLeave로 알린다. 수신 실패(ClientThread)와 송신 실패(RoomThread)가 거의 동시에 부를 수 있으므로 `InterlockedExchange`로 처음 한 번만 실행된다. 다른 스레드에서 Disconnect하면 막혀 있던 수신이 깨어나 ClientThread가 정상 종료로 끝난다. ClientThread는 루프를 빠져나오면 Disconnect를 부른다.
+
 ## 공통 프로토콜
 
 PDF 15~18쪽의 패킷 번호 1~12와 필드를 따른다. 문서에서 정하지 않은 세부 표현은 이번 코드에서 다음과 같이 명시했다. 서버와 클라이언트가 동일한 헤더를 공유해야 한다.
