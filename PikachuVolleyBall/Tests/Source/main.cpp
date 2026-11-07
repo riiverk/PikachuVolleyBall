@@ -838,6 +838,104 @@ void ClientReceiveTest()
     std::cout << "PASS: client receive framing/errors, EOF, partial-receive cancellation and reconnect cleanup\n";
 }
 
+bool TakeNetEvent(HWND window, PacketType expected, std::vector<char>& packet)
+{
+    MSG message{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_REMOVE))
+    {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    char* data = reinterpret_cast<char*>(message.lParam);
+    if (data == nullptr) return false;
+    PacketHeader header{};
+    std::memcpy(&header, data, sizeof(header));
+    packet.assign(data, data + header.size);
+    delete[] data;
+    return message.wParam == static_cast<WPARAM>(expected) && header.type == expected;
+}
+
+bool HasNetEvent(HWND window)
+{
+    MSG message{};
+    return PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_NOREMOVE) != FALSE;
+}
+
+void ClientProcessPacketTest()
+{
+    const HWND window = CreateWindowExA(0, "STATIC", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+    Check(window != nullptr, "create message-only window");
+    NetworkClient client;
+    client.ProcessPacket(nullptr);
+
+    GameStatePacket state; state.tick = 77; state.phase = Phase::Playing; state.p[1].x = 940; state.ball.x = 120.5f;
+    client.ProcessPacket(reinterpret_cast<char*>(&state));
+    GameStatePacket latest;
+    client.GetLatestState(latest);
+    Check(std::memcmp(&latest, &state, sizeof(state)) == 0, "GAME_STATE stores the latest state");
+
+    ScorePacket score; score.scorer = 1; score.score[1] = 4;
+    client.ProcessPacket(reinterpret_cast<char*>(&score));
+    Check(!HasNetEvent(window), "no window means no posted event");
+
+    client.SetWindow(window);
+    client.ProcessPacket(reinterpret_cast<char*>(&state));
+    Check(!HasNetEvent(window), "GAME_STATE is polled, not posted");
+    std::vector<char> received;
+    client.ProcessPacket(reinterpret_cast<char*>(&score));
+    Check(TakeNetEvent(window, PacketType::SCORE, received) && received.size() == sizeof(score) &&
+        std::memcmp(received.data(), &score, sizeof(score)) == 0, "SCORE is posted as a copied packet");
+
+    ChatPacket chat; chat.sender = 0; std::memcpy(chat.msg, "hi", 3);
+    client.ProcessPacket(reinterpret_cast<char*>(&chat));
+    Check(TakeNetEvent(window, PacketType::CHAT, received) && std::memcmp(received.data(), &chat, sizeof(chat)) == 0,
+        "CHAT is posted with sender and message");
+
+    InputPacket input; input.keys = LEFT;
+    JoinRoomPacket join; join.roomNo = 1;
+    PacketHeader broken{3, PacketType::SCORE};
+    client.ProcessPacket(reinterpret_cast<char*>(&input));
+    client.ProcessPacket(reinterpret_cast<char*>(&join));
+    client.ProcessPacket(reinterpret_cast<char*>(&broken));
+    client.GetLatestState(latest);
+    Check(!HasNetEvent(window) && latest.tick == 77, "client-to-server and malformed packets are ignored");
+
+    Listener listener;
+    Check(client.Connect("127.0.0.1", listener.port), "connect dispatching client");
+    Socket server; server.value = listener.Accept();
+    client.GetLatestState(latest);
+    Check(latest.tick == 0, "connect clears the previous state");
+    JoinResultPacket result; result.result = JoinResult::Matched; result.myIndex = 1;
+    GameStartPacket start; start.stage = 2; start.serveSide = 1; std::memcpy(start.nick[0], "pika", 5);
+    EventPacket event; event.kind = EventKind::Spike; event.who = 0;
+    StageOverPacket stageOver; stageOver.stage = 1; stageOver.winner = 0;
+    GameOverPacket gameOver; gameOver.winner = 1; gameOver.reason = GameOverReason::Quit;
+    state.tick = 5;
+    SendBytes(server.value, reinterpret_cast<const char*>(&result), sizeof(result));
+    SendBytes(server.value, reinterpret_cast<const char*>(&start), sizeof(start));
+    SendBytes(server.value, reinterpret_cast<const char*>(&state), sizeof(state));
+    SendBytes(server.value, reinterpret_cast<const char*>(&event), sizeof(event));
+    SendBytes(server.value, reinterpret_cast<const char*>(&stageOver), sizeof(stageOver));
+    SendBytes(server.value, reinterpret_cast<const char*>(&gameOver), sizeof(gameOver));
+    Check(TakeNetEvent(window, PacketType::JOIN_RESULT, received) && std::memcmp(received.data(), &result, sizeof(result)) == 0,
+        "receive thread posts JOIN_RESULT");
+    Check(TakeNetEvent(window, PacketType::GAME_START, received) && std::memcmp(received.data(), &start, sizeof(start)) == 0,
+        "receive thread posts GAME_START in order");
+    Check(TakeNetEvent(window, PacketType::EVENT, received) && std::memcmp(received.data(), &event, sizeof(event)) == 0,
+        "receive thread posts EVENT");
+    Check(TakeNetEvent(window, PacketType::STAGE_OVER, received) && std::memcmp(received.data(), &stageOver, sizeof(stageOver)) == 0,
+        "receive thread posts STAGE_OVER");
+    Check(TakeNetEvent(window, PacketType::GAME_OVER, received) && std::memcmp(received.data(), &gameOver, sizeof(gameOver)) == 0,
+        "receive thread posts GAME_OVER");
+    WaitUntil([&] { return client.GetReceivedCount() == 6; }, "all six server packets are dispatched");
+    client.GetLatestState(latest);
+    Check(latest.tick == 5 && !HasNetEvent(window), "receive thread stores GAME_STATE without posting");
+    client.Disconnect();
+    DestroyWindow(window);
+    std::cout << "PASS: client ProcessPacket stores GAME_STATE and posts other server packets to the window\n";
+}
+
 void ClientSessionRoundTripTest()
 {
     Listener listener;
@@ -921,7 +1019,7 @@ int main()
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); BallGravityTest(); ClientReceiveTest(); ClientSessionRoundTripTest(); LinkScaffolds();
+        SessionSendTest(); BallGravityTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)

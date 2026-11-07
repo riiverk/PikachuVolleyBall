@@ -1,6 +1,7 @@
 #pragma once
 #include "Common.h"
 
+// WPARAM is the PacketType. LPARAM is a new[] copy of the whole packet; the window must delete[] it.
 inline constexpr UINT WM_NET_EVENT = WM_APP + 1;
 
 class NetworkClient
@@ -10,6 +11,7 @@ public:
     ~NetworkClient();
     NetworkClient(const NetworkClient&) = delete;
     NetworkClient& operator=(const NetworkClient&) = delete;
+    void SetWindow(HWND window);
     bool Connect(const char* ip, u_short port);
     void SendJoinRoom(int roomNo, const char* nick);
     static DWORD WINAPI RecvThread(LPVOID arg);

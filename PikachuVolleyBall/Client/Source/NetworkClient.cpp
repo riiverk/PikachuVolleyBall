@@ -1,5 +1,6 @@
 #include "NetworkClient.h"
 #include <cstring>
+#include <new>
 
 NetworkClient::NetworkClient()
 {
@@ -12,6 +13,13 @@ NetworkClient::~NetworkClient()
     Disconnect();
     DeleteCriticalSection(&sendLock_);
     DeleteCriticalSection(&stateLock_);
+}
+
+void NetworkClient::SetWindow(HWND window)
+{
+    EnterCriticalSection(&stateLock_);
+    window_ = window;
+    LeaveCriticalSection(&stateLock_);
 }
 
 bool NetworkClient::Connect(const char* ip, u_short port)
@@ -175,7 +183,41 @@ bool NetworkClient::ReceiveExact(SOCKET socket, char* buffer, int length, bool a
     if (!IsStopping()) SetError(error);
     return false;
 }
-void NetworkClient::ProcessPacket(char*) { /* TODO 11/7 */ }
+void NetworkClient::ProcessPacket(char* buf)
+{
+    if (buf == nullptr) return;
+    PacketHeader header{};
+    std::memcpy(&header, buf, sizeof(header));
+    if (header.size == 0 || PacketSize(header.type) != header.size) return;
+    switch (header.type)
+    {
+    case PacketType::GAME_STATE:
+        // The latest state is polled by the timer, so it is stored instead of posted.
+        EnterCriticalSection(&stateLock_);
+        std::memcpy(&latestState_, buf, sizeof(latestState_));
+        LeaveCriticalSection(&stateLock_);
+        return;
+    case PacketType::JOIN_RESULT:
+    case PacketType::GAME_START:
+    case PacketType::EVENT:
+    case PacketType::SCORE:
+    case PacketType::STAGE_OVER:
+    case PacketType::GAME_OVER:
+    case PacketType::CHAT:
+        break;
+    default:
+        return; // Client-to-server packet types are never valid from the server.
+    }
+    EnterCriticalSection(&stateLock_);
+    const HWND window = window_;
+    LeaveCriticalSection(&stateLock_);
+    if (window == nullptr) return;
+    char* copy = new (std::nothrow) char[header.size];
+    if (copy == nullptr) return;
+    std::memcpy(copy, buf, header.size);
+    if (!PostMessage(window, WM_NET_EVENT, static_cast<WPARAM>(header.type), reinterpret_cast<LPARAM>(copy)))
+        delete[] copy;
+}
 void NetworkClient::SendInput(std::uint8_t keys)
 {
     if (!IsConnected())
@@ -198,7 +240,7 @@ void NetworkClient::SendNextStage() { /* TODO 11/26 */ }
 void NetworkClient::GetLatestState(GameStatePacket& out)
 {
     EnterCriticalSection(&stateLock_);
-    out = latestState_; /* Filled by ProcessPacket when packet handling is implemented. */
+    out = latestState_;
     LeaveCriticalSection(&stateLock_);
 }
 void NetworkClient::Disconnect()
