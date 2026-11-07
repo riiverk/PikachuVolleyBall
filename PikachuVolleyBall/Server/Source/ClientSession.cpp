@@ -1,4 +1,5 @@
 #include "ClientSession.h"
+#include "Room.h"
 #include <cstdio>
 #include <cstring>
 
@@ -68,8 +69,7 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
         ++session->receivedCount_;
         LeaveCriticalSection(&session->stateLock_);
     }
-    session->Disconnect(); // Room notification is added with the leave handling.
-    session->CloseSocket();
+    session->Disconnect();
     return session->GetLastError();
 }
 
@@ -190,4 +190,14 @@ bool ClientSession::SendPacket(const char* buf, int len)
     return sent == len;
 }
 
-void ClientSession::Disconnect() { /* TODO 11/7 */ }
+void ClientSession::Disconnect()
+{
+    if (InterlockedExchange(&disconnected_, 1) == 1) return;
+    EnterCriticalSection(&stateLock_);
+    stopping_ = true;
+    Room* room = room_;
+    const int index = playerIndex_;
+    LeaveCriticalSection(&stateLock_);
+    CloseSocket();
+    if (room != nullptr) room->OnPlayerLeave(index);
+}

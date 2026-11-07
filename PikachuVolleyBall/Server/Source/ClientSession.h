@@ -33,6 +33,7 @@ private:
     DWORD lastError_ = 0;
     mutable CRITICAL_SECTION stateLock_;
     CRITICAL_SECTION csSend_;
+    volatile LONG disconnected_ = 0;
     bool stopping_ = false;
     std::size_t receivedCount_ = 0;
     Room* room_ = nullptr;
