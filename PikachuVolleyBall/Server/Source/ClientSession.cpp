@@ -5,11 +5,13 @@
 ClientSession::ClientSession(SOCKET socket) : socket_(socket)
 {
     InitializeCriticalSection(&stateLock_);
+    InitializeCriticalSection(&csSend_);
 }
 
 ClientSession::~ClientSession()
 {
     Stop();
+    DeleteCriticalSection(&csSend_);
     DeleteCriticalSection(&stateLock_);
 }
 
@@ -171,5 +173,21 @@ void ClientSession::CloseSocket()
 }
 
 void ClientSession::ProcessPacket(char*) { /* TODO 11/8 */ }
-bool ClientSession::SendPacket(const char*, int) { return false; /* TODO 11/6 */ }
+
+bool ClientSession::SendPacket(const char* buf, int len)
+{
+    if (buf == nullptr || len <= 0) return false;
+    EnterCriticalSection(&csSend_);
+    const SOCKET socket = GetSocket();
+    int sent = 0;
+    while (socket != INVALID_SOCKET && sent < len)
+    {
+        const int count = send(socket, buf + sent, len - sent, 0);
+        if (count == SOCKET_ERROR) break;
+        sent += count;
+    }
+    LeaveCriticalSection(&csSend_);
+    return sent == len;
+}
+
 void ClientSession::Disconnect() { /* TODO 11/7 */ }
