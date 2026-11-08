@@ -7,7 +7,7 @@ class RoomManager;
 class ClientSession
 {
 public:
-    explicit ClientSession(SOCKET socket = INVALID_SOCKET);
+    explicit ClientSession(SOCKET socket = INVALID_SOCKET, RoomManager* rooms = nullptr);
     ~ClientSession();
     ClientSession(const ClientSession&) = delete;
     ClientSession& operator=(const ClientSession&) = delete;
@@ -36,6 +36,7 @@ private:
     volatile LONG disconnected_ = 0;
     bool stopping_ = false;
     std::size_t receivedCount_ = 0;
+    RoomManager* rooms_ = nullptr;
     Room* room_ = nullptr;
     int playerIndex_ = -1;
     char nickname_[MAX_NICK]{};

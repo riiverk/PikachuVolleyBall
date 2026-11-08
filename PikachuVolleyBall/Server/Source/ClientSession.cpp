@@ -1,9 +1,10 @@
 #include "ClientSession.h"
 #include "Room.h"
+#include "RoomManager.h"
 #include <cstdio>
 #include <cstring>
 
-ClientSession::ClientSession(SOCKET socket) : socket_(socket)
+ClientSession::ClientSession(SOCKET socket, RoomManager* rooms) : socket_(socket), rooms_(rooms)
 {
     InitializeCriticalSection(&stateLock_);
     InitializeCriticalSection(&csSend_);
@@ -174,7 +175,65 @@ void ClientSession::CloseSocket()
     LeaveCriticalSection(&stateLock_);
 }
 
-void ClientSession::ProcessPacket(char*) { /* TODO 11/8 */ }
+void ClientSession::ProcessPacket(char* buf)
+{
+    if (buf == nullptr) return;
+    PacketHeader header;
+    std::memcpy(&header, buf, sizeof(header));
+    EnterCriticalSection(&stateLock_);
+    Room* room = room_;
+    const int index = playerIndex_;
+    LeaveCriticalSection(&stateLock_);
+    switch (header.type)
+    {
+    case PacketType::JOIN_ROOM:
+    {
+        if (room != nullptr || rooms_ == nullptr) break;
+        JoinRoomPacket packet;
+        std::memcpy(&packet, buf, sizeof(packet));
+        packet.nickname[MAX_NICK - 1] = '\0';
+        int seat = -1;
+        std::uint8_t result = 0;
+        Room* joined = rooms_->JoinRoom(packet.roomNo, this, seat, result);
+        if (joined == nullptr) break;
+        EnterCriticalSection(&stateLock_);
+        room_ = joined;
+        playerIndex_ = seat;
+        std::memcpy(nickname_, packet.nickname, MAX_NICK);
+        LeaveCriticalSection(&stateLock_);
+        break;
+    }
+    case PacketType::INPUT:
+    {
+        InputPacket packet;
+        std::memcpy(&packet, buf, sizeof(packet));
+        if (room != nullptr) room->SetInput(index, packet.keys);
+        else std::printf("[session %lu] ignore INPUT without room\n", GetCurrentThreadId());
+        break;
+    }
+    case PacketType::NEXT_STAGE:
+        if (room != nullptr) room->OnNextStage(index);
+        else std::printf("[session %lu] ignore NEXT_STAGE without room\n", GetCurrentThreadId());
+        break;
+    case PacketType::CHAT:
+    {
+        ChatPacket packet;
+        std::memcpy(&packet, buf, sizeof(packet));
+        packet.msg[MAX_CHAT - 1] = '\0';
+        if (room != nullptr) room->OnChat(index, packet.msg);
+        else std::printf("[session %lu] ignore CHAT without room\n", GetCurrentThreadId());
+        break;
+    }
+    case PacketType::LEAVE:
+        Disconnect();
+        break;
+    default:
+        std::printf("[session %lu] unexpected type=%u, disconnect\n", GetCurrentThreadId(),
+            static_cast<unsigned>(header.type));
+        Disconnect();
+        break;
+    }
+}
 bool ClientSession::SendPacket(const char* buf, int len)
 {
     if (buf == nullptr || len < static_cast<int>(sizeof(PacketHeader)) || len > MAX_PACKET_SIZE)

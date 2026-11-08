@@ -150,7 +150,7 @@ void Server::AcceptLoop()
             closesocket(accepted);
             continue;
         }
-        ClientSession* session = new (std::nothrow) ClientSession(accepted);
+        ClientSession* session = new (std::nothrow) ClientSession(accepted, &rooms_);
         if (!session)
         {
             closesocket(accepted);
