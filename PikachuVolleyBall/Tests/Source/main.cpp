@@ -376,6 +376,19 @@ void HorizontalMovementTest()
     std::cout << "PASS: player movement, court/net bounds, awakened speed and action restrictions\n";
 }
 
+void GameClientSceneTest()
+{
+    GameClient client;
+    Check(client.GetScene() == Scene::Connect, "game client starts at the connect scene");
+
+    for (const Scene scene : {Scene::Waiting, Scene::Playing, Scene::StageOver, Scene::Playing, Scene::Result, Scene::Connect})
+    {
+        client.ChangeScene(scene);
+        Check(client.GetScene() == scene, "game client switches to the requested scene");
+    }
+    std::cout << "PASS: game client scene transitions and return to connect\n";
+}
+
 void InputManagerTest()
 {
     InputManager input;
@@ -1242,7 +1255,7 @@ void LinkScaffolds()
 int main()
 {
     std::cout << std::unitbuf;
-    try { ServerConnectTest(); ServerAcceptTest(); }
+    try { GameClientSceneTest(); ServerConnectTest(); ServerAcceptTest(); }
     catch (const std::exception& error)
     {
         std::cerr << "FAIL: " << error.what() << '\n';
