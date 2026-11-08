@@ -2,6 +2,7 @@
 #include "../../Server/Source/Server.h"
 #include "../../Server/Source/ClientSession.h"
 #include "../../Server/Source/Room.h"
+#include "../../Server/Source/RoomManager.h"
 #include "../../Server/Source/PlayerMovement.h"
 #include "../../Server/Source/BallPhysics.h"
 #include "../../Client/Source/GameClient.h"
@@ -1158,6 +1159,45 @@ void ClientSessionRoundTripTest()
     std::cout << "PASS: real client/session bidirectional JOIN/INPUT/START/STATE/SCORE exchange\n";
 }
 
+void ProcessPacketTest()
+{
+    ClientSession idle;
+    idle.ProcessPacket(nullptr);
+    {
+        Stream stream;
+        RoomManager rooms;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET), &rooms);
+        Check(session.Start(), "start session for packet dispatch");
+        JoinRoomPacket join; join.roomNo = 3; std::memcpy(join.nickname, "pika", 5);
+        InputPacket input; input.keys = RIGHT;
+        ChatPacket chat; std::memset(chat.msg, 'a', sizeof(chat.msg));
+        NextStagePacket next;
+        stream.Send(reinterpret_cast<const char*>(&join), sizeof(join));
+        stream.Send(reinterpret_cast<const char*>(&input), sizeof(input));
+        stream.Send(reinterpret_cast<const char*>(&chat), sizeof(chat));
+        stream.Send(reinterpret_cast<const char*>(&next), sizeof(next));
+        WaitUntil([&] { return session.GetReceivedCount() == 4; }, "room packets without a room are ignored");
+        Check(!session.WaitForFinish(30), "ignored packets keep the session open");
+        LeavePacket leave;
+        stream.Send(reinterpret_cast<const char*>(&leave), sizeof(leave));
+        Check(session.WaitForFinish(2000) && session.GetLastError() == 0 && session.GetReceivedCount() == 5,
+              "LEAVE ends the session cleanly");
+        char tail;
+        Check(recv(stream.sender.value, &tail, 1, 0) == 0, "LEAVE closes the connection");
+    }
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start session for unexpected type");
+        JoinResultPacket wrongWay;
+        stream.Send(reinterpret_cast<const char*>(&wrongWay), sizeof(wrongWay));
+        Check(session.WaitForFinish(2000), "server-to-client packet from a client ends the session");
+        char tail;
+        Check(recv(stream.sender.value, &tail, 1, 0) == 0, "unexpected type closes the connection");
+    }
+    std::cout << "PASS: packet type dispatch, ignored room packets, LEAVE and unexpected types\n";
+}
+
 void LinkScaffolds()
 {
     // Exercise declarations from each module so missing definitions fail linking.
@@ -1216,7 +1256,7 @@ int main()
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); BallGravityTest(); BallWallTest(); BallNetTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); BallGravityTest(); BallWallTest(); BallNetTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
