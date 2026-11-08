@@ -69,7 +69,7 @@ void GameWorld::ResetBall(int serveSide)
     serveSide_ = serveSide;
 }
 
-void GameWorld::UpdateBall() { MoveBallWithGravity(state_.ball); }
+void GameWorld::UpdateBall() { AdvanceBall(state_.ball); }
 void GameWorld::CheckScore() { /* TODO 11/13: scoring. */ }
 void GameWorld::FillState(GameStatePacket& out) { out = state_; /* TODO 11/15 */ }
 std::vector<GameEvent> GameWorld::PopEvents() { return {}; /* TODO 11/18 */ }
