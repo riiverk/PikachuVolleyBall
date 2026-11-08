@@ -6,7 +6,7 @@
 
 struct GameEvent { EventKind kind; std::uint8_t who; };
 
-// Movement and ball gravity are implemented; collisions and scoring follow.
+// Movement, ball gravity and court/net reflection are implemented; player hits and scoring follow.
 class GameWorld
 {
 public:

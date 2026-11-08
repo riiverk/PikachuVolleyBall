@@ -904,6 +904,75 @@ void BallWallTest()
     std::cout << "PASS: ball wall/ceiling reflection, damping, exact contact and tick integration\n";
 }
 
+void BallNetTest()
+{
+    auto close = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
+    auto impact = [](BallState previous, float x, float y) {
+        BallState next = previous; next.x = x; next.y = y;
+        Check(ReflectBallAtNet(next, previous), "ball path must hit the net");
+        return next;
+    };
+    BallState ball = impact({450, 500, 400, -200, 1}, 470, 490);
+    Check(ball.x == 460 && ball.y == 495 && close(ball.vx, -380) && close(ball.vy, -180) && ball.spike == 1,
+        "left net face reflects horizontally while preserving ascent and spike");
+    ball = impact({580, 500, -400, 200, 0}, 560, 510);
+    Check(ball.x == 565 && close(ball.vx, 380) && close(ball.vy, 180), "right net face reflects to the right");
+    ball = impact({500, 350, 100, 400, 0}, 505, 370);
+    Check(ball.y == 360 && close(ball.x, 502.5f) && close(ball.vx, 95) && close(ball.vy, -360),
+        "net top reflects downward motion upward without reversing horizontal direction");
+    ball = impact({500, 730, 0, -400, 0}, 500, 700);
+    Check(ball.y == 715 && close(ball.vy, 360), "net lower edge uses the original collider inset");
+    ball = impact({400, 500, 400, 0, 0}, 650, 500);
+    Check(ball.x == 460 && close(ball.vx, -380), "fast left-to-right path cannot tunnel through the net");
+    ball = impact({650, 500, -400, 0, 0}, 400, 500);
+    Check(ball.x == 565 && close(ball.vx, 380), "fast right-to-left path cannot tunnel through the net");
+    ball = impact({500, 250, 0, 400, 0}, 500, 750);
+    Check(ball.y == 360 && close(ball.vy, -360), "fast falling path cannot cross the whole net");
+    for (float y : {300.0f, 360.0f, 715.0f, 750.0f})
+    {
+        BallState previous{400, y, 400, 0, 0};
+        ball = previous; ball.x = 650;
+        Check(!ReflectBallAtNet(ball, previous) && ball.x == 650 && ball.vx == 400,
+            "paths above, below or grazing the net are untouched");
+    }
+    BallState previous{450, 370, 100, -100, 0};
+    ball = previous; ball.x = 470; ball.y = 350;
+    Check(!ReflectBallAtNet(ball, previous), "single corner graze does not bounce");
+    ball = impact({450, 350, 100, 100, 0}, 470, 370);
+    Check(ball.x == 460 && ball.y == 360 && close(ball.vy, -90), "diagonal corner entry resolves at first contact");
+    ball = impact({450, 500, 400, 0, 0}, 460, 500);
+    Check(ball.x == 460 && close(ball.vx, -380), "exact endpoint contact reflects an incoming ball");
+    previous = ball; ball.x -= 10;
+    Check(!ReflectBallAtNet(ball, previous) && close(ball.vx, -380), "departing side contact does not bounce again");
+    previous = {500, 360, 0, -200, 0}; ball = previous; ball.y = 350;
+    Check(!ReflectBallAtNet(ball, previous) && ball.vy == -200, "departing top contact does not bounce again");
+    previous = {461, 500, -100, 0, 0}; ball = previous;
+    Check(ReflectBallAtNet(ball, previous) && ball.x == 460 && ball.vx == -100,
+        "existing overlap is corrected without slowing a ball already leaving");
+    ball = impact({461, 500, 100, 0, 0}, 462, 500);
+    Check(ball.x == 460 && close(ball.vx, -95), "existing inward overlap is corrected and reflected");
+    previous = {461, 500, -100, 0, 0}; ball = previous; ball.x = 450;
+    Check(!ReflectBallAtNet(ball, previous) && ball.x == 450 && ball.vx == -100,
+        "an overlapping ball can leave the net freely");
+
+    ball = {459, 500, 400, -200, 0};
+    AdvanceBall(ball);
+    Check(ball.x == 460 && close(ball.vx, -380) && close(ball.vy, -165.6f),
+        "tick applies gravity then reflects at the net side");
+    AdvanceBall(ball);
+    Check(ball.x < 460 && close(ball.vx, -380) && close(ball.vy, -149.6f),
+        "following tick leaves the net without repeated reflection");
+    ball = {500, 359, 100, 400, 0};
+    AdvanceBall(ball);
+    Check(ball.y == 360 && close(ball.vx, 95) && close(ball.vy, -374.4f), "tick bounces on the net top");
+    AdvanceBall(ball);
+    Check(ball.y < 360 && close(ball.vy, -358.4f), "top bounce rises away on the next tick");
+    ball = {400, 500, 40000, -16, 0};
+    AdvanceBall(ball);
+    Check(ball.x == 460 && close(ball.vx, -38000), "net is hit before a distant wall on a fast crossing tick");
+    std::cout << "PASS: ball net side/top reflection, swept collision, grazing, overlap recovery and successive ticks\n";
+}
+
 void ClientReceiveTest()
 {
     Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
@@ -1147,7 +1216,7 @@ int main()
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); BallGravityTest(); BallWallTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); BallGravityTest(); BallWallTest(); BallNetTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
