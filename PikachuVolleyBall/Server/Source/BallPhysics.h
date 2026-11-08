@@ -19,3 +19,28 @@ inline void MoveBallWithGravity(BallState& ball)
     ball.x += ball.vx * GameConst::TickSeconds * GameConst::BallTimeScale;
     ball.y += ball.vy * GameConst::TickSeconds * GameConst::BallTimeScale;
 }
+
+inline void ReflectBallAtWalls(BallState& ball)
+{
+    if (ball.x <= GameConst::CourtLeft)
+    {
+        ball.x = static_cast<float>(GameConst::CourtLeft);
+        if (ball.vx < 0) ball.vx = -ball.vx * GameConst::BallWallRestitution;
+    }
+    else if (ball.x >= GameConst::CourtRight - GameConst::BallCollisionSize)
+    {
+        ball.x = static_cast<float>(GameConst::CourtRight - GameConst::BallCollisionSize);
+        if (ball.vx > 0) ball.vx = -ball.vx * GameConst::BallWallRestitution;
+    }
+    if (ball.y <= GameConst::CeilingY)
+    {
+        ball.y = static_cast<float>(GameConst::CeilingY);
+        if (ball.vy < 0) ball.vy = -ball.vy;
+    }
+}
+
+inline void AdvanceBall(BallState& ball)
+{
+    MoveBallWithGravity(ball);
+    ReflectBallAtWalls(ball);
+}

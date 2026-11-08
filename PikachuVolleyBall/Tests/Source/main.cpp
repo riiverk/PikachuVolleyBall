@@ -867,6 +867,43 @@ void BallGravityTest()
     std::cout << "PASS: ball serve reset, gravity, accumulated motion and original time scale\n";
 }
 
+void BallWallTest()
+{
+    auto close = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
+    BallState ball{};
+    ball.x = -5; ball.y = 100; ball.vx = -200; ball.vy = -300; ball.spike = 1;
+    ReflectBallAtWalls(ball);
+    Check(ball.x == 0 && close(ball.vx, 180) && ball.vy == -300 && ball.spike == 1,
+        "left wall clamps and reflects horizontal speed without changing spike");
+    ReflectBallAtWalls(ball);
+    Check(close(ball.vx, 180), "left wall does not reflect a departing ball twice");
+    ball.x = 1070; ball.vx = 200;
+    ReflectBallAtWalls(ball);
+    Check(ball.x == 1060 && close(ball.vx, -180), "right wall includes the ball collision size");
+    ReflectBallAtWalls(ball);
+    Check(close(ball.vx, -180), "right wall does not reflect a departing ball twice");
+    ball.x = -2; ball.vx = 50; ball.y = -30; ball.vy = -300;
+    ReflectBallAtWalls(ball);
+    Check(ball.x == 0 && ball.vx == 50 && ball.y == -25 && ball.vy == 300,
+        "ceiling reflects upward motion and left wall preserves inward motion");
+    ReflectBallAtWalls(ball);
+    Check(ball.vy == 300, "ceiling does not reflect downward motion");
+    ball.x = 1060; ball.vx = 200; ball.y = -25; ball.vy = -100;
+    ReflectBallAtWalls(ball);
+    Check(close(ball.vx, -180) && ball.vy == 100, "exact wall and ceiling corner contact reflects both axes");
+    ball = BallState{}; ball.x = 1; ball.y = -24; ball.vx = -200; ball.vy = -300;
+    AdvanceBall(ball);
+    Check(ball.x == 0 && ball.y == -25 && close(ball.vx, 180) && ball.vy == 284,
+        "tick resolves wall and ceiling overshoot after applying gravity");
+    AdvanceBall(ball);
+    Check(ball.x > 0 && ball.y > -25 && close(ball.vx, 180) && ball.vy == 300,
+        "next tick moves away from the corner without repeated damping");
+    ball = BallState{}; ball.x = 100; ball.y = 800; ball.vy = 100;
+    AdvanceBall(ball);
+    Check(ball.y > 800 && ball.vy == 116, "wall reflection does not add a floor bounce");
+    std::cout << "PASS: ball wall/ceiling reflection, damping, exact contact and tick integration\n";
+}
+
 void ClientReceiveTest()
 {
     Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
@@ -1110,7 +1147,7 @@ int main()
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); BallGravityTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); BallGravityTest(); BallWallTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)

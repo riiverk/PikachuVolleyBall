@@ -119,8 +119,11 @@ NetworkClient는 접속 직후 별도의 수신 스레드를 시작한다. 헤�
 | 담당 | 완료 내용 |
 |---|---|
 | 강석주 | ClientSession::Disconnect, 한 번만 실행되는 연결 종료 |
+| 정진영 | 서버 공의 좌우 벽·천장 반사 |
 
 Disconnect는 소켓을 닫고, 방에 들어가 있으면 Room::OnPlayerLeave로 알린다. 수신 실패(ClientThread)와 송신 실패(RoomThread)가 거의 동시에 부를 수 있으므로 `InterlockedExchange`로 처음 한 번만 실행된다. 다른 스레드에서 Disconnect하면 막혀 있던 수신이 깨어나 ClientThread가 정상 종료로 끝난다. ClientThread는 루프를 빠져나오면 Disconnect를 부른다.
+
+공의 위치를 이동 후 검사하여 좌우 벽은 x=0~1060, 천장은 y=-25로 제한한다. 벽에서는 수평 속도를 반전하고 0.9배로 줄이며 천장에서는 위로 향하는 속도만 아래로 반전한다. 경계에서 이미 안쪽으로 움직이는 공은 다시 반사하지 않는다. `GameWorld::UpdateBall`과 `Update`에서 적용하며 바닥 득점 처리는 후속 일정이다.
 
 ## 공통 프로토콜
 

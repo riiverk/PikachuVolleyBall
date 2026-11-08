@@ -36,6 +36,7 @@ inline constexpr int NetLeft = 550;
 inline constexpr int NetRight = 575;
 inline constexpr int NetTop = 450;
 inline constexpr int BallCollisionSize = 90;
+inline constexpr float BallWallRestitution = 0.9f;
 inline constexpr float BallGravity = 1000.0f;
 inline constexpr float BallTimeScale = 2.3f;
 inline constexpr float HitForce = 1000.0f;
