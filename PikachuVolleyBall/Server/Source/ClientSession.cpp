@@ -1,17 +1,18 @@
 #include "ClientSession.h"
+#include "Room.h"
 #include <cstdio>
 #include <cstring>
 
 ClientSession::ClientSession(SOCKET socket) : socket_(socket)
 {
     InitializeCriticalSection(&stateLock_);
-    InitializeCriticalSection(&sendLock_);
+    InitializeCriticalSection(&csSend_);
 }
 
 ClientSession::~ClientSession()
 {
     Stop();
-    DeleteCriticalSection(&sendLock_);
+    DeleteCriticalSection(&csSend_);
     DeleteCriticalSection(&stateLock_);
 }
 
@@ -51,8 +52,8 @@ void ClientSession::Stop()
         threadId_ = 0;
     }
     CloseSocket();
-    EnterCriticalSection(&sendLock_);
-    LeaveCriticalSection(&sendLock_);
+    EnterCriticalSection(&csSend_);
+    LeaveCriticalSection(&csSend_);
 }
 
 DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
@@ -70,8 +71,7 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
         ++session->receivedCount_;
         LeaveCriticalSection(&session->stateLock_);
     }
-    session->Disconnect(); // Room notification is added with the leave handling.
-    session->CloseSocket();
+    session->Disconnect();
     return session->GetLastError();
 }
 
@@ -191,7 +191,7 @@ bool ClientSession::SendPacket(const char* buf, int len)
     }
     // A room worker and a session worker may send to the same socket.
     // Hold the send lock across the whole frame so their bytes do not mix.
-    EnterCriticalSection(&sendLock_);
+    EnterCriticalSection(&csSend_);
     int sent = 0;
     int error = 0;
     while (sent < len)
@@ -215,14 +215,24 @@ bool ClientSession::SendPacket(const char* buf, int len)
         }
         sent += count;
     }
-    LeaveCriticalSection(&sendLock_);
+    LeaveCriticalSection(&csSend_);
     if (error != 0)
     {
         SetError(error);
-        if (error != WSAENOTCONN) CloseSocket();
+        if (error != WSAENOTCONN) Disconnect();
         return false;
     }
     SetError(0);
     return true;
 }
-void ClientSession::Disconnect() { /* TODO 11/7 */ }
+void ClientSession::Disconnect()
+{
+    if (InterlockedExchange(&disconnected_, 1) == 1) return;
+    EnterCriticalSection(&stateLock_);
+    stopping_ = true;
+    Room* room = room_;
+    const int index = playerIndex_;
+    LeaveCriticalSection(&stateLock_);
+    CloseSocket();
+    if (room != nullptr) room->OnPlayerLeave(index);
+}

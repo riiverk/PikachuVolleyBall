@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
@@ -507,6 +508,94 @@ void SessionThreadTest()
     std::cout << "PASS: session receive loop, TCP framing, malformed/truncated packets, EOF and cancellation\n";
 }
 
+void SessionSendFrameIntegrityTest()
+{
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(!session.SendPacket(nullptr, 3) && !session.SendPacket("x", 0), "invalid send arguments are rejected");
+        InputPacket input; input.keys = LEFT | UP;
+        Check(session.SendPacket(reinterpret_cast<const char*>(&input), sizeof(input)), "send one packet");
+        std::array<unsigned char, sizeof(InputPacket)> bytes{};
+        Check(recvn(stream.sender.value, reinterpret_cast<char*>(bytes.data()), sizeof(input), 0) == sizeof(input) &&
+              std::memcmp(bytes.data(), &input, sizeof(input)) == 0, "peer receives the same bytes");
+    }
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        constexpr int perThread = 300;
+        constexpr int frameSize = sizeof(GameStatePacket);
+        auto writer = [&](char fill, bool& ok) {
+            std::array<char, frameSize> frame{};
+            PacketHeader header{static_cast<std::uint16_t>(frameSize), PacketType::GAME_STATE};
+            std::memcpy(frame.data(), &header, sizeof(header));
+            std::memset(frame.data() + sizeof(header), fill, frameSize - sizeof(header));
+            ok = true;
+            for (int i = 0; i < perThread; ++i) ok = session.SendPacket(frame.data(), frameSize) && ok;
+        };
+        bool okA = false, okB = false, framesIntact = true;
+        int countA = 0, countB = 0;
+        std::thread reader([&] {
+            std::array<char, frameSize> frame{};
+            for (int i = 0; i < perThread * 2; ++i)
+            {
+                if (recvn(stream.sender.value, frame.data(), frameSize, 0) != frameSize) { framesIntact = false; return; }
+                const PacketHeader* header = reinterpret_cast<const PacketHeader*>(frame.data());
+                const char fill = frame[sizeof(PacketHeader)];
+                bool same = header->size == frameSize && header->type == PacketType::GAME_STATE && (fill == 'A' || fill == 'B');
+                for (int j = sizeof(PacketHeader); j < frameSize; ++j) same = same && frame[j] == fill;
+                if (!same) { framesIntact = false; return; }
+                (fill == 'A' ? countA : countB)++;
+            }
+        });
+        std::thread a(writer, 'A', std::ref(okA));
+        std::thread b(writer, 'B', std::ref(okB));
+        a.join(); b.join(); reader.join();
+        Check(okA && okB, "concurrent sends succeed");
+        Check(framesIntact && countA == perThread && countB == perThread, "concurrent sends arrive as whole frames");
+    }
+    std::cout << "PASS: session send, argument checks and concurrent sends arriving as whole frames\n";
+}
+
+void SessionDisconnectTest()
+{
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start session for disconnect");
+        Check(!session.WaitForFinish(30), "worker waits for packets");
+        const auto started = std::chrono::steady_clock::now();
+        session.Disconnect();
+        Check(session.WaitForFinish(2000) && std::chrono::steady_clock::now() - started < std::chrono::seconds(2),
+              "disconnect from another thread ends the blocked worker");
+        Check(session.GetLastError() == 0, "local disconnect is a clean exit");
+        char tail;
+        Check(recv(stream.sender.value, &tail, 1, 0) == 0, "peer sees the connection closed");
+        InputPacket input;
+        Check(!session.SendPacket(reinterpret_cast<const char*>(&input), sizeof(input)), "send after disconnect fails");
+        session.Disconnect();
+    }
+    for (int round = 0; round < 20; ++round)
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start session for concurrent disconnect");
+        std::thread first([&] { session.Disconnect(); });
+        std::thread second([&] { session.Disconnect(); });
+        first.join(); second.join();
+        Check(session.WaitForFinish(2000) && session.GetLastError() == 0, "simultaneous disconnects close once");
+    }
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start session for peer close");
+        closesocket(std::exchange(stream.sender.value, INVALID_SOCKET));
+        Check(session.WaitForFinish(2000), "peer close ends the worker");
+        session.Disconnect();
+    }
+    std::cout << "PASS: disconnect once, from another thread or concurrently, and after peer close\n";
+}
+
 void JoinRoomSendTest()
 {
     NetworkClient client;
@@ -955,8 +1044,10 @@ void ClientSessionRoundTripTest()
     WaitUntil([&] { return client.GetReceivedCount() == 3; }, "client receives all server frames");
     client.SendInput(0);
     WaitUntil([&] { return session.GetReceivedCount() == 3; }, "client can send while receiver runs");
-    session.Stop();
-    Check(client.WaitForReceiveEnd(2000) && client.GetLastError() == 0 && !client.IsConnected(), "server stop propagates EOF to client");
+    session.Disconnect();
+    Check(session.WaitForFinish(2000), "Disconnect ends the server worker during a real client connection");
+    session.Disconnect();
+    Check(client.WaitForReceiveEnd(2000) && client.GetLastError() == 0 && !client.IsConnected(), "server Disconnect propagates EOF to client");
     client.Disconnect();
     std::cout << "PASS: real client/session bidirectional JOIN/INPUT/START/STATE/SCORE exchange\n";
 }
@@ -1019,7 +1110,7 @@ int main()
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); BallGravityTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); BallGravityTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
