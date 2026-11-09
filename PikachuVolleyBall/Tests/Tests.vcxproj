@@ -162,4 +162,7 @@
     <ClInclude Include="..\Common\GameConst.h" />
     <ClInclude Include="..\Common\Protocol.h" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\Client\Source\Resource.rc" />
+  </ItemGroup>
 </Project>

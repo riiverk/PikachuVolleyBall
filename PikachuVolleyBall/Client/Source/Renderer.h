@@ -1,11 +1,26 @@
 #pragma once
 #include "Common.h"
 
-// New online renderer scaffold. Existing GameRenderer still runs local play.
+// Online renderer for server game states.
 class Renderer
 {
 public:
+    Renderer() = default;
+    ~Renderer();
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
+
     bool Initialize(HWND window);
     void Render(const GameStatePacket& state);
     void Shutdown();
+
+private:
+    HWND window_ = nullptr;
+    HDC backBufferDC_ = nullptr;
+    HBITMAP backBuffer_ = nullptr;
+    HGDIOBJ originalBackBuffer_ = nullptr;
+    HDC spriteDC_ = nullptr;
+    HBITMAP spriteSheet_ = nullptr;
+    HGDIOBJ originalSprite_ = nullptr;
+    HBITMAP warning_ = nullptr;
 };

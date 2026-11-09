@@ -389,6 +389,44 @@ void GameClientSceneTest()
     std::cout << "PASS: game client scene transitions and return to connect\n";
 }
 
+void RendererInitializationTest()
+{
+    const HWND window = CreateWindowExW(0, L"STATIC", nullptr, WS_POPUP,
+        0, 0, 320, 240, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(window != nullptr, "create a hidden renderer window");
+    const HANDLE process = GetCurrentProcess();
+    {
+        Renderer renderer;
+        Check(!renderer.Initialize(nullptr), "renderer requires a valid window");
+        Check(renderer.Initialize(window), "initialize the renderer and load both bitmaps");
+        renderer.Shutdown();
+        GdiFlush();
+        const DWORD baseline = GetGuiResources(process, GR_GDIOBJECTS);
+        Check(renderer.Initialize(window), "renderer can initialize after shutdown");
+        GdiFlush();
+        const DWORD initializedCount = GetGuiResources(process, GR_GDIOBJECTS);
+        Check(initializedCount > baseline, "renderer owns GDI objects after initialization");
+        Check(renderer.Initialize(window), "repeated initialization on the same window succeeds");
+        GdiFlush();
+        Check(GetGuiResources(process, GR_GDIOBJECTS) == initializedCount,
+            "repeated initialization does not allocate more GDI objects");
+
+        renderer.Shutdown();
+        renderer.Shutdown();
+        GdiFlush();
+        Check(GetGuiResources(process, GR_GDIOBJECTS) == baseline, "shutdown releases the renderer's GDI objects");
+    }
+    const DWORD baseline = GetGuiResources(process, GR_GDIOBJECTS);
+    {
+        Renderer renderer;
+        Check(renderer.Initialize(window), "initialize the renderer before destruction");
+    }
+    GdiFlush();
+    Check(GetGuiResources(process, GR_GDIOBJECTS) == baseline, "destruction releases the renderer's GDI objects");
+    DestroyWindow(window);
+    std::cout << "PASS: renderer initialization, shutdown and GDI resource ownership\n";
+}
+
 void InputManagerTest()
 {
     InputManager input;
@@ -1388,7 +1426,7 @@ void LinkScaffolds()
 int main()
 {
     std::cout << std::unitbuf;
-    try { GameClientSceneTest(); ServerConnectTest(); ServerAcceptTest(); }
+    try { GameClientSceneTest(); RendererInitializationTest(); ServerConnectTest(); ServerAcceptTest(); }
     catch (const std::exception& error)
     {
         std::cerr << "FAIL: " << error.what() << '\n';
