@@ -61,6 +61,8 @@ inline void UpdatePlayerJump(PlayerState& player, const PlayerInput& input, int&
         player.action = Action::Jump;
     }
     if (player.action != Action::Jump && player.action != Action::Spike) return;
+    // The original spike stays active until landing, even after the key is released.
+    if (input.spike) player.action = Action::Spike;
     player.y += velocityY;
     velocityY += GameConst::JumpGravity;
     if (player.y >= GameConst::PlayerGroundY)

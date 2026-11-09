@@ -16,13 +16,14 @@ GameWorld::GameWorld()
 void GameWorld::Reset(int, int) { /* TODO 11/10: initialize stage and serve. */ }
 void GameWorld::Update(const std::uint8_t inputs[2])
 {
+    const PlayerState previousPlayers[GameConst::PlayerCount] = {state_.p[0], state_.p[1]};
     ApplyInputs(inputs);
     StartSlides();
     MovePlayers();
     JumpPlayers();
     SlidePlayers();
-    UpdateBall();
-    /* TODO 11/11: integrate collisions and scoring into the tick. */
+    UpdateBall(previousPlayers);
+    /* TODO 11/11: integrate scoring and stage progression into the tick. */
 }
 
 void GameWorld::StartSlides()
@@ -69,7 +70,11 @@ void GameWorld::ResetBall(int serveSide)
     serveSide_ = serveSide;
 }
 
-void GameWorld::UpdateBall() { AdvanceBall(state_.ball); }
+void GameWorld::UpdateBall() { UpdateBall(state_.p); }
+void GameWorld::UpdateBall(const PlayerState (&previousPlayers)[2])
+{
+    AdvanceBall(state_.ball, state_.p, previousPlayers);
+}
 void GameWorld::CheckScore() { /* TODO 11/13: scoring. */ }
 void GameWorld::FillState(GameStatePacket& out) { out = state_; /* TODO 11/15 */ }
 std::vector<GameEvent> GameWorld::PopEvents() { return {}; /* TODO 11/18 */ }
