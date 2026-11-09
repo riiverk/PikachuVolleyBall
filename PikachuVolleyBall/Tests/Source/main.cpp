@@ -987,6 +987,139 @@ void BallNetTest()
     std::cout << "PASS: ball net side/top reflection, swept collision, grazing, overlap recovery and successive ticks\n";
 }
 
+void BallPlayerHitTest()
+{
+    auto close = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
+    PlayerState players[2]{};
+    players[0].x = 30; players[1].x = 950;
+    players[0].y = players[1].y = 560;
+    auto hit = [&](BallState previous, float x, float y) {
+        BallState next = previous; next.x = x; next.y = y;
+        float time = -1;
+        Check(ReflectBallAtPlayers(next, previous, players, players, time) && time >= 0 && time <= 1,
+            "incoming ball must contact a player head during this tick");
+        return next;
+    };
+    BallState ball = hit({65, 450, 0, 400, 1}, 65, 480);
+    Check(ball.x == 65 && ball.y == 470 && close(ball.vx, 450) && ball.vy == -600 && ball.spike == 0,
+        "left normal return uses original force and clears an incoming spike");
+    ball = hit({985, 450, 0, 400, 0}, 985, 480);
+    Check(ball.y == 470 && close(ball.vx, -450) && ball.vy == -600, "right normal return aims toward the other court");
+    ball = hit({95, 450, 0, 400, 0}, 95, 480);
+    Check(close(ball.vx, 456), "off-center contact adjusts horizontal force");
+    players[0].action = Action::Spike;
+    ball = hit({65, 450, 0, 400, 0}, 65, 480);
+    Check(close(ball.vx, 720) && ball.vy == -800 && ball.spike == 1, "left spike uses original spike force");
+    players[1].action = Action::Spike;
+    ball = hit({985, 450, 0, 400, 0}, 985, 480);
+    Check(close(ball.vx, -720) && ball.vy == -800 && ball.spike == 1, "right spike is mirrored");
+    players[0].evil = 1;
+    ball = hit({65, 450, 0, 400, 0}, 65, 480);
+    Check(close(ball.vx, 1120) && ball.vy == -1000 && ball.spike == 1, "awakened spike uses stronger original force");
+    players[0].action = Action::Jump;
+    ball = hit({95, 450, 0, 400, 1}, 95, 480);
+    Check(close(ball.vx, 612) && ball.vy == -800 && ball.spike == 0, "awakened normal hit and offset do not retain spike state");
+    players[0].evil = 0; players[0].action = Action::Slide;
+    ball = hit({65, 450, 0, 400, 0}, 65, 480);
+    Check(close(ball.vx, 450) && ball.spike == 0, "sliding player can return the ball without a spike");
+    players[0].action = players[1].action = Action::Idle;
+    ball = hit({65, 100, 0, 20000, 0}, 65, 900);
+    Check(ball.y == 470 && ball.vy == -600, "fast ball cannot tunnel through the head band");
+    ball = hit({65, 450, 0, 400, 0}, 65, 470);
+    Check(ball.y == 470 && ball.vy == -600, "exact head-top contact is a hit");
+    ball = hit({65, 480, 0, 400, 0}, 65, 490);
+    Check(ball.y == 470, "shallow incoming overlap is recovered above the head");
+    auto miss = [&](BallState previous, float x, float y) {
+        BallState next = previous; next.x = x; next.y = y;
+        float time = -1;
+        Check(!ReflectBallAtPlayers(next, previous, players, players, time), "non-head contact must not return the ball");
+        Check(next.x == x && next.y == y && next.vx == previous.vx && next.vy == previous.vy && next.spike == previous.spike,
+            "a missed head contact leaves the ball unchanged");
+    };
+    miss({-30, 450, 0, 400, 0}, -30, 480);
+    miss({160, 450, 0, 400, 0}, 160, 480);
+    miss({65, 600, 0, -400, 0}, 65, 530);
+    miss({65, 600, 0, 400, 0}, 65, 650);
+    miss({65, 470, 0, -600, 0}, 65, 440);
+    miss({65, 480, 0, -600, 0}, 65, 470);
+    miss({65, 450, 0, 0, 0}, 65, 450);
+    for (Action locked : {Action::Win, Action::Lose})
+    {
+        players[0].action = locked;
+        miss({65, 450, 0, 400, 0}, 65, 480);
+    }
+    players[0].action = Action::Idle;
+    PlayerState previousPlayers[2] = {players[0], players[1]};
+    players[0].y = 510;
+    BallState previous{65, 440, 0, 0, 0}; ball = previous;
+    float time = -1;
+    Check(ReflectBallAtPlayers(ball, previous, players, previousPlayers, time) && close(time, 0.6f) && ball.y == 420,
+        "rising head catches a stationary ball using relative vertical motion");
+    players[0].y = 560; players[0].x = 200; previousPlayers[0].x = 0;
+    previous = {120, 450, 0, 400, 0}; ball = previous; ball.y = 490;
+    Check(ReflectBallAtPlayers(ball, previous, players, previousPlayers, time) && close(time, 0.5f) && close(ball.vx, 447),
+        "moving head is tested at contact time rather than only at its endpoint");
+    players[0].x = 30;
+    ball = {65, 469, 0, 400, 0};
+    AdvanceBall(ball, players, players);
+    Check(ball.y == 470 && close(ball.vx, 450) && ball.vy == -600, "ball tick includes player collision after gravity");
+    AdvanceBall(ball, players, players);
+    Check(ball.y < 470 && ball.vy == -584 && close(ball.vx, 450), "following tick leaves the head without hitting twice");
+    players[0].x = 385; players[0].action = Action::Spike;
+    ball = {350, 400, 8000, 6500, 0};
+    AdvanceBall(ball, players, players);
+    Check(ball.x < 460 && ball.y == 470 && ball.vx > 0 && ball.vy == -800 && ball.spike == 1,
+        "head before net determines the collision response");
+    ball = {350, 300, 8000, 9500, 0};
+    AdvanceBall(ball, players, players);
+    Check(ball.x == 460 && close(ball.vx, -7600) && ball.vy > 0 && ball.spike == 0,
+        "net before head does not apply a later spike");
+    std::cout << "PASS: player head returns/spikes, awakened force, moving heads, fast paths, misses and collision order\n";
+}
+
+void BallPlayerWorldTest()
+{
+    for (int side = 0; side < 2; ++side)
+    {
+        GameWorld world;
+        world.ResetBall(side);
+        GameStatePacket state;
+        bool hit = false;
+        for (int tick = 0; tick < 60; ++tick)
+        {
+            world.UpdateBall(); world.FillState(state);
+            if (state.ball.vy < 0) { hit = true; break; }
+        }
+        Check(hit && state.ball.y == 470 && state.ball.vy == -600 && state.ball.spike == 0,
+            "GameWorld UpdateBall returns a served ball on either player's head");
+        Check(std::fabs(state.ball.vx - (side == 0 ? 461.0f : -451.0f)) < 0.001f,
+            "world hit uses the proper side and original off-center force");
+    }
+    GameWorld world;
+    GameStatePacket state;
+    std::uint8_t keys[2] = {UP | ACTION, 0};
+    world.Update(keys); world.FillState(state);
+    Check(state.p[0].action == Action::Spike && state.p[0].y == 535, "jump plus action starts a spike");
+    keys[0] = 0;
+    bool hit = false;
+    for (int tick = 0; tick < 40; ++tick)
+    {
+        world.Update(keys); world.FillState(state);
+        if (state.ball.spike) { hit = true; break; }
+        Check(state.p[0].action == Action::Spike, "spike intent persists after key release while airborne");
+    }
+    Check(hit && state.ball.vy == -800 && std::fabs(state.ball.vx - 731) < 0.001f,
+        "input, jumping player motion and server ball tick produce an actual spike");
+    for (int tick = 0; tick < 60 && state.p[0].y != 560; ++tick)
+    {
+        world.Update(keys); world.FillState(state);
+    }
+    Check(state.p[0].y == 560 && state.p[0].action == Action::Idle, "landing ends spike action");
+    keys[0] = ACTION; world.Update(keys); world.FillState(state);
+    Check(state.p[0].action == Action::Idle, "ground action without a direction does not become a spike");
+    std::cout << "PASS: GameWorld serve-to-head hits, jump/spike input, release persistence and landing cleanup\n";
+}
+
 void ClientReceiveTest()
 {
     Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
@@ -1269,7 +1402,9 @@ int main()
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); BallGravityTest(); BallWallTest(); BallNetTest(); ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest();
+        BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallPlayerWorldTest();
+        ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
     catch (const std::exception& error)
