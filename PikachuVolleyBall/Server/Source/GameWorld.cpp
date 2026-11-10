@@ -5,15 +5,45 @@
 
 GameWorld::GameWorld()
 {
-    for (int i = 0; i < GameConst::PlayerCount; ++i)
-    {
-        state_.p[i].x = GameConst::PlayerStartX[i];
-        state_.p[i].y = GameConst::PlayerGroundY;
-    }
-    ResetBall(0);
+    Reset(1, 0);
 }
 
-void GameWorld::Reset(int, int) { /* TODO 11/10: initialize stage and serve. */ }
+void GameWorld::Reset(int stage, int serveSide)
+{
+    if (stage < 1 || stage > GameConst::StageCount) throw std::out_of_range("stage");
+    if (serveSide < 0 || serveSide >= GameConst::PlayerCount) throw std::out_of_range("serve side");
+
+    // Read the previous result before clearing the scores. Serve side is independent.
+    std::uint8_t awakened[GameConst::PlayerCount]{};
+    if (stage == 2)
+    {
+        if (stage_ == 1 && scores_[0] != scores_[1])
+            awakened[scores_[0] < scores_[1] ? 0 : 1] = 1;
+        else if (stage_ == 2)
+        {
+            // Resetting the same second stage keeps the first-stage loser's awakening.
+            for (int i = 0; i < GameConst::PlayerCount; ++i)
+                awakened[i] = state_.p[i].evil;
+        }
+    }
+
+    stage_ = stage;
+    state_ = GameStatePacket{};
+    events_.clear();
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        scores_[i] = 0;
+        state_.p[i].x = GameConst::PlayerStartX[i];
+        state_.p[i].y = GameConst::PlayerGroundY;
+        state_.p[i].evil = awakened[i];
+        previousInputs_[i] = 0;
+        playerInputs_[i] = PlayerInput{};
+        velocityY_[i] = 0;
+        slideCount_[i] = 0;
+        slideDirection_[i] = 0;
+    }
+    ResetBall(serveSide);
+}
 void GameWorld::Update(const std::uint8_t inputs[2])
 {
     const PlayerState previousPlayers[GameConst::PlayerCount] = {state_.p[0], state_.p[1]};

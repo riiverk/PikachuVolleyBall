@@ -17,6 +17,30 @@
 #include <thread>
 #include <utility>
 
+// Inspect stage bookkeeping without adding fields to the network protocol or public API.
+struct GameWorldResetTestAccess
+{
+    static void FinishFirstStage(GameWorld& world, int loser)
+    {
+        world.stage_ = 1;
+        world.scores_[loser] = 2;
+        world.scores_[1 - loser] = GameConst::WinningScore;
+        world.state_.phase = Phase::StageOver;
+        world.state_.tick = 99;
+        for (int i = 0; i < GameConst::PlayerCount; ++i)
+        {
+            world.state_.p[i].action = i == loser ? Action::Lose : Action::Win;
+            world.state_.p[i].frame = 4;
+        }
+        world.events_.push_back({EventKind::Score, static_cast<std::uint8_t>(1 - loser)});
+    }
+    static bool StageIsFresh(const GameWorld& world, int stage, int serveSide)
+    {
+        return world.stage_ == stage && world.serveSide_ == serveSide &&
+            world.scores_[0] == 0 && world.scores_[1] == 0 && world.events_.empty();
+    }
+};
+
 namespace
 {
 void Check(bool ok, const char* label)
@@ -1158,6 +1182,115 @@ void BallPlayerWorldTest()
     std::cout << "PASS: GameWorld serve-to-head hits, jump/spike input, release persistence and landing cleanup\n";
 }
 
+void StageResetTest()
+{
+    for (int side = 0; side < GameConst::PlayerCount; ++side)
+    {
+        GameWorld world;
+        const std::uint8_t active[2] = {UP | ACTION, RIGHT | ACTION};
+        world.Update(active);
+        world.Update(active);
+        world.Reset(1, side);
+        GameStatePacket state;
+        world.FillState(state);
+        Check(state.size == sizeof(GameStatePacket) && state.type == PacketType::GAME_STATE &&
+            state.phase == Phase::Ready && state.tick == 0, "reset prepares a fresh ready-state packet");
+        Check(GameWorldResetTestAccess::StageIsFresh(world, 1, side),
+            "reset records stage/serve and clears scores and pending events");
+        for (int i = 0; i < GameConst::PlayerCount; ++i)
+        {
+            Check(state.p[i].x == GameConst::PlayerStartX[i] && state.p[i].y == GameConst::PlayerGroundY &&
+                state.p[i].action == Action::Idle && state.p[i].frame == 0 && state.p[i].evil == 0,
+                "first-stage reset restores both players and clears animation and awakening");
+            const PlayerInput& input = world.GetPlayerInput(i);
+            Check(input.held == 0 && input.pressed == 0 && input.released == 0 &&
+                input.moveDirection == 0 && !input.jump && !input.spike && input.slideDirection == 0 &&
+                input.action == Action::Idle, "reset clears pending player intentions");
+        }
+        Check(state.ball.x == GameConst::ServeX[side] && state.ball.y == GameConst::ServeY &&
+            state.ball.vx == 0 && state.ball.vy == GameConst::ServeVelocityY && state.ball.spike == 0,
+            "reset selects either serve and clears old ball velocity/spike");
+        world.Update(active);
+        world.FillState(state);
+        Check(state.p[0].action == Action::Spike && state.p[0].y == 535 &&
+            state.p[1].action == Action::Slide && state.p[1].x == 964 && state.p[1].y == 557,
+            "same held keys immediately after reset count as fresh jump/spike and slide requests");
+        world.Reset(1, side);
+        const std::uint8_t idle[2]{};
+        world.Update(idle);
+        world.FillState(state);
+        Check(state.p[0].x == 30 && state.p[1].x == 950 && state.p[0].y == 560 && state.p[1].y == 560 &&
+            state.p[0].action == Action::Idle && state.p[1].action == Action::Idle,
+            "old jumping and sliding do not continue after reset");
+    }
+
+    for (int loser = 0; loser < GameConst::PlayerCount; ++loser)
+    {
+        for (int side = 0; side < GameConst::PlayerCount; ++side)
+        {
+            GameWorld world;
+            const std::uint8_t active[2] = {UP | ACTION, LEFT | ACTION};
+            world.Update(active);
+            GameWorldResetTestAccess::FinishFirstStage(world, loser);
+            world.Reset(2, side);
+            GameStatePacket state;
+            world.FillState(state);
+            Check(GameWorldResetTestAccess::StageIsFresh(world, 2, side) &&
+                state.tick == 0 && state.phase == Phase::Ready,
+                "stage transition clears old score, events, tick and phase");
+            Check(state.p[loser].evil == 1 && state.p[1 - loser].evil == 0 &&
+                state.p[0].action == Action::Idle && state.p[1].action == Action::Idle &&
+                state.p[0].frame == 0 && state.p[1].frame == 0,
+                "only the first-stage loser awakens, independent of serve side");
+            const std::uint8_t move[2] = {RIGHT, RIGHT};
+            world.Update(move);
+            world.FillState(state);
+            for (int i = 0; i < GameConst::PlayerCount; ++i)
+                Check(state.p[i].x == GameConst::PlayerStartX[i] +
+                    (i == loser ? GameConst::AwakenedMoveSpeed : GameConst::MoveSpeed) && state.p[i].y == 560,
+                    "reset awakening feeds existing movement without stale jumping or sliding");
+            world.Reset(2, side);
+            world.FillState(state);
+            Check(state.p[loser].evil == 1 && state.p[1 - loser].evil == 0 &&
+                GameWorldResetTestAccess::StageIsFresh(world, 2, side),
+                "repeating a second-stage reset preserves its first-stage loser");
+            world.Reset(1, 1 - side);
+            world.FillState(state);
+            Check(state.p[0].evil == 0 && state.p[1].evil == 0 &&
+                GameWorldResetTestAccess::StageIsFresh(world, 1, 1 - side),
+                "a new first stage removes awakening from the previous match");
+        }
+    }
+    GameWorld noResult;
+    noResult.Reset(2, 0);
+    GameStatePacket state;
+    noResult.FillState(state);
+    Check(state.p[0].evil == 0 && state.p[1].evil == 0,
+        "a tied first-stage score does not invent an awakened loser");
+
+    const int invalid[][2] = {{0, 0}, {-1, 0}, {3, 0}, {1, -1}, {1, 2}, {2, 2}};
+    for (const auto& args : invalid)
+    {
+        GameWorld world;
+        const std::uint8_t keys[2] = {UP | ACTION, LEFT | ACTION};
+        world.Update(keys);
+        GameWorld control = world;
+        GameStatePacket before, after;
+        world.FillState(before);
+        bool rejected = false;
+        try { world.Reset(args[0], args[1]); }
+        catch (const std::out_of_range&) { rejected = true; }
+        world.FillState(after);
+        Check(rejected && std::memcmp(&before, &after, sizeof(before)) == 0,
+            "invalid stage or serve is rejected before changing game state");
+        world.Update(keys); control.Update(keys);
+        world.FillState(after); control.FillState(before);
+        Check(std::memcmp(&before, &after, sizeof(before)) == 0,
+            "a rejected reset also preserves input history and movement counters");
+    }
+    std::cout << "PASS: stage/serve reset, score/event cleanup, loser awakening, restart and invalid arguments\n";
+}
+
 void ClientReceiveTest()
 {
     Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
@@ -1441,7 +1574,7 @@ int main()
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
         SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest();
-        BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallPlayerWorldTest();
+        BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallPlayerWorldTest(); StageResetTest();
         ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
