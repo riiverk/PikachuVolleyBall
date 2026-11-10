@@ -6,7 +6,7 @@
 
 struct GameEvent { EventKind kind; std::uint8_t who; };
 
-// Movement, ball gravity and court/net/player collisions are implemented; scoring follows.
+// Stage reset, movement and court/net/player collisions are implemented; scoring follows.
 class GameWorld
 {
 public:
@@ -23,6 +23,7 @@ public:
     bool IsStageOver();
     int GetLoser();
 private:
+    friend struct GameWorldResetTestAccess;
     void UpdateBall(const PlayerState (&previousPlayers)[2]);
     void StartSlides();
     void MovePlayers();
