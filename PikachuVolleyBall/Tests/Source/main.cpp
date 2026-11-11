@@ -20,6 +20,8 @@
 // Inspect stage bookkeeping without adding fields to the network protocol or public API.
 struct GameWorldResetTestAccess
 {
+    static void SetPhase(GameWorld& world, Phase phase) { world.state_.phase = phase; }
+
     static void FinishFirstStage(GameWorld& world, int loser)
     {
         world.stage_ = 1;
@@ -1291,6 +1293,53 @@ void StageResetTest()
     std::cout << "PASS: stage/serve reset, score/event cleanup, loser awakening, restart and invalid arguments\n";
 }
 
+void GameWorldTickTest()
+{
+    GameWorld world;
+    world.Reset(1, 1);
+    GameStatePacket before, after;
+    world.FillState(before);
+    bool rejected = false;
+    try { world.Update(nullptr); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    world.FillState(after);
+    Check(rejected && std::memcmp(&before, &after, sizeof(before)) == 0,
+        "invalid input must not start or advance a tick");
+
+    const std::uint8_t keys[2] = {RIGHT | UP, LEFT | ACTION};
+    world.Update(keys);
+    world.FillState(after);
+    Check(after.phase == Phase::Playing && after.tick == 1 &&
+        after.p[0].x == 40 && after.p[0].y == 535 && after.p[0].action == Action::Jump &&
+        after.p[1].x == 936 && after.p[1].y == 557 && after.p[1].action == Action::Slide &&
+        after.ball.x == 980 && after.ball.vy == 416 && std::fabs(after.ball.y - 15.3088f) < 0.001f,
+        "the first playing tick advances both players and the served ball once");
+    world.Update(keys);
+    world.FillState(after);
+    Check(after.phase == Phase::Playing && after.tick == 2 &&
+        after.p[0].x == 50 && after.p[0].y == 511 && after.p[1].x == 922 && after.p[1].y == 554 &&
+        after.ball.vy == 432 && std::fabs(after.ball.y - 31.2064f) < 0.001f,
+        "consecutive ticks continue the jump and slide without restarting them");
+
+    const std::uint8_t idle[2]{};
+    for (Phase phase : {Phase::ServeWait, Phase::StageOver, Phase::GameOver})
+    {
+        GameWorldResetTestAccess::SetPhase(world, phase);
+        world.FillState(before);
+        world.Update(idle);
+        world.FillState(after);
+        Check(std::memcmp(&before, &after, sizeof(before)) == 0 &&
+            world.GetPlayerInput(0).held == keys[0] && world.GetPlayerInput(1).held == keys[1],
+            "paused or finished play must preserve the world and input history");
+    }
+    world.Reset(2, 0);
+    world.Update(idle);
+    world.FillState(after);
+    Check(after.phase == Phase::Playing && after.tick == 1 && after.ball.x == 120,
+        "a new stage restarts tick numbering with its own serve");
+    std::cout << "PASS: GameWorld tick order, ready-to-playing transition, paused phases and stage restart\n";
+}
+
 void ClientReceiveTest()
 {
     Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
@@ -1574,7 +1623,7 @@ int main()
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
         SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest();
-        BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallPlayerWorldTest(); StageResetTest();
+        BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallPlayerWorldTest(); StageResetTest(); GameWorldTickTest();
         ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }
