@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <vector>
 
 // Inspect stage bookkeeping without adding fields to the network protocol or public API.
 struct GameWorldResetTestAccess
@@ -1489,15 +1490,21 @@ void ProcessPacketTest()
         InputPacket input; input.keys = RIGHT;
         ChatPacket chat; std::memset(chat.msg, 'a', sizeof(chat.msg));
         NextStagePacket next;
-        stream.Send(reinterpret_cast<const char*>(&join), sizeof(join));
         stream.Send(reinterpret_cast<const char*>(&input), sizeof(input));
         stream.Send(reinterpret_cast<const char*>(&chat), sizeof(chat));
         stream.Send(reinterpret_cast<const char*>(&next), sizeof(next));
-        WaitUntil([&] { return session.GetReceivedCount() == 4; }, "room packets without a room are ignored");
+        WaitUntil([&] { return session.GetReceivedCount() == 3; }, "room packets without a room are ignored");
         Check(!session.WaitForFinish(30), "ignored packets keep the session open");
+        stream.Send(reinterpret_cast<const char*>(&join), sizeof(join));
+        JoinResultPacket reply;
+        Check(recvn(stream.sender.value, reinterpret_cast<char*>(&reply), sizeof(reply), 0) == sizeof(reply) &&
+              reply.type == PacketType::JOIN_RESULT && reply.result == JoinResult::Waiting && reply.myIndex == 0,
+              "JOIN_ROOM is answered after joining");
+        stream.Send(reinterpret_cast<const char*>(&input), sizeof(input));
+        WaitUntil([&] { return session.GetReceivedCount() == 5; }, "room packets after joining are accepted");
         LeavePacket leave;
         stream.Send(reinterpret_cast<const char*>(&leave), sizeof(leave));
-        Check(session.WaitForFinish(2000) && session.GetLastError() == 0 && session.GetReceivedCount() == 5,
+        Check(session.WaitForFinish(2000) && session.GetLastError() == 0 && session.GetReceivedCount() == 6,
               "LEAVE ends the session cleanly");
         char tail;
         Check(recv(stream.sender.value, &tail, 1, 0) == 0, "LEAVE closes the connection");
@@ -1513,6 +1520,132 @@ void ProcessPacketTest()
         Check(recv(stream.sender.value, &tail, 1, 0) == 0, "unexpected type closes the connection");
     }
     std::cout << "PASS: packet type dispatch, ignored room packets, LEAVE and unexpected types\n";
+}
+
+void RoomJoinTest()
+{
+    {
+        RoomManager rooms;
+        ClientSession a, b, c, d;
+        int seat = -1;
+        std::uint8_t result = 0;
+        Check(rooms.JoinRoom(1, nullptr, seat, result) == nullptr && seat == -1, "null session is rejected");
+        Room* first = rooms.JoinRoom(7, &a, seat, result);
+        Check(first != nullptr && seat == 0 && result == static_cast<std::uint8_t>(JoinResult::Waiting), "first player waits in seat 0");
+        Room* second = rooms.JoinRoom(7, &b, seat, result);
+        Check(second == first && seat == 1 && result == static_cast<std::uint8_t>(JoinResult::Matched), "second player matches in seat 1");
+        Check(first->GetPlayer(0) == &a && first->GetPlayer(1) == &b && first->GetPlayer(2) == nullptr, "room keeps both players");
+        Check(rooms.JoinRoom(7, &c, seat, result) == nullptr && seat == -1 &&
+              result == static_cast<std::uint8_t>(JoinResult::Full), "third player finds the room full");
+        Room* other = rooms.JoinRoom(8, &d, seat, result);
+        Check(other != nullptr && other != first && seat == 0, "another room number makes another room");
+    }
+    for (int round = 0; round < 20; ++round)
+    {
+        RoomManager rooms;
+        std::array<ClientSession, 8> sessions;
+        std::array<int, 8> seats{};
+        std::array<Room*, 8> joined{};
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 8; ++i)
+            threads.emplace_back([&, i] { std::uint8_t r = 0; joined[i] = rooms.JoinRoom(42, &sessions[i], seats[i], r); });
+        for (auto& thread : threads) thread.join();
+        int seat0 = 0, seat1 = 0, full = 0;
+        Room* room = nullptr;
+        for (int i = 0; i < 8; ++i)
+        {
+            if (joined[i] == nullptr) { ++full; continue; }
+            if (room == nullptr) room = joined[i];
+            Check(joined[i] == room, "simultaneous joins share one room");
+            (seats[i] == 0 ? seat0 : seat1)++;
+        }
+        Check(seat0 == 1 && seat1 == 1 && full == 6, "csRooms gives each seat to exactly one of simultaneous joins");
+    }
+    std::cout << "PASS: room join seats, full room, separate rooms and simultaneous joins\n";
+}
+
+void JoinResultTest()
+{
+    Server server;
+    Check(server.InitServer(0), "listener for join results");
+    AcceptRunner running(server);
+    WaitUntil([&] { return server.IsAccepting(); }, "accept loop for join results");
+    auto connectRaw = [&](Socket& s) {
+        s.value = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = htons(server.GetPort());
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        Check(connect(s.value, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "raw client connects");
+        const DWORD timeout = 2000;
+        setsockopt(s.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    };
+    auto join = [](Socket& s, int roomNo, const char* nick) {
+        JoinRoomPacket packet; packet.roomNo = roomNo;
+        std::memcpy(packet.nickname, nick, std::strlen(nick) + 1);
+        Check(send(s.value, reinterpret_cast<const char*>(&packet), sizeof(packet), 0) == sizeof(packet), "send JOIN_ROOM");
+    };
+    auto receive = [](Socket& s) {
+        JoinResultPacket packet;
+        Check(recvn(s.value, reinterpret_cast<char*>(&packet), sizeof(packet), 0) == sizeof(packet) &&
+              packet.size == sizeof(packet) && packet.type == PacketType::JOIN_RESULT, "receive JOIN_RESULT");
+        return packet;
+    };
+    Socket first, second, lone;
+    connectRaw(first); connectRaw(second); connectRaw(lone);
+    join(first, 12, "red");
+    JoinResultPacket reply = receive(first);
+    Check(reply.result == JoinResult::Waiting && reply.myIndex == 0, "first player gets Waiting in seat 0");
+    join(second, 12, "blue");
+    reply = receive(second);
+    Check(reply.result == JoinResult::Matched && reply.myIndex == 1, "second player gets Matched in seat 1");
+    reply = receive(first);
+    Check(reply.result == JoinResult::Matched && reply.myIndex == 0, "first player is told about the match");
+    join(lone, 13, "green");
+    reply = receive(lone);
+    Check(reply.result == JoinResult::Waiting && reply.myIndex == 0, "other room number waits alone");
+    running.Finish();
+    std::cout << "PASS: JOIN_RESULT waiting, matched to both players and separate rooms over TCP\n";
+}
+
+void RoomRemoveTest()
+{
+    RoomManager rooms;
+    std::array<ClientSession, 4> sessions;
+    int seat = -1;
+    std::uint8_t result = 0;
+    Room* first = rooms.JoinRoom(1, &sessions[0], seat, result);
+    rooms.JoinRoom(1, &sessions[1], seat, result);
+    rooms.JoinRoom(2, &sessions[2], seat, result);
+    Check(first != nullptr && rooms.GetRoomCount() == 2, "two rooms exist before removal");
+    rooms.RemoveRoom(1);
+    Check(rooms.GetRoomCount() == 1, "removed room leaves the list");
+    rooms.RemoveRoom(1);
+    rooms.RemoveRoom(99);
+    Check(rooms.GetRoomCount() == 1, "removing a missing room changes nothing");
+    Room* again = rooms.JoinRoom(1, &sessions[3], seat, result);
+    Check(again != nullptr && seat == 0 && result == static_cast<std::uint8_t>(JoinResult::Waiting),
+          "a removed room number starts as a new waiting room");
+    rooms.RemoveRoom(1);
+    rooms.RemoveRoom(2);
+    Check(rooms.GetRoomCount() == 0, "all rooms removed");
+
+    RoomManager shared;
+    std::array<ClientSession, 64> players;
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 4; ++t)
+        threads.emplace_back([&, t] {
+            for (int i = 0; i < 16; ++i)
+            {
+                int s = -1; std::uint8_t r = 0;
+                const int roomNo = 100 + t * 16 + i;
+                shared.JoinRoom(roomNo, &players[t * 16 + i], s, r);
+                if (i % 2 == 0) shared.RemoveRoom(roomNo);
+            }
+        });
+    for (auto& thread : threads) thread.join();
+    Check(shared.GetRoomCount() == 32, "joins and removals from several threads keep the list consistent");
+    std::cout << "PASS: room removal, missing rooms, reuse of a room number and concurrent join/remove\n";
 }
 
 void LinkScaffolds()
@@ -1542,7 +1675,7 @@ void LinkScaffolds()
     (void)ClientSession::ClientThread(nullptr); (void)Room::RoomThread(nullptr);
     int index; std::uint8_t result;
     RoomManager manager;
-    Check(manager.JoinRoom(1, &session, index, result) == nullptr && index == -1, "no false room admission");
+    Check(manager.JoinRoom(1, nullptr, index, result) == nullptr && index == -1, "no false room admission");
     manager.RemoveRoom(1);
     Check(!network.Connect(nullptr, SERVERPORT), "invalid connection request rejected");
     network.SendJoinRoom(1, "test"); network.SendInput(0); network.SendChat("");
@@ -1573,7 +1706,7 @@ int main()
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); JoinResultTest(); RoomRemoveTest();
         BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallPlayerWorldTest(); StageResetTest();
         ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
