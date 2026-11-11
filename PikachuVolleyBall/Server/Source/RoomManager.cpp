@@ -1,5 +1,6 @@
 #include "RoomManager.h"
 #include "Room.h"
+#include <cstdio>
 #include <new>
 
 RoomManager::RoomManager() { InitializeCriticalSection(&csRooms_); }
@@ -36,4 +37,27 @@ Room* RoomManager::JoinRoom(int roomNo, ClientSession* s, int& outIdx, std::uint
     outResult = static_cast<std::uint8_t>(matched ? JoinResult::Matched : JoinResult::Waiting);
     return room;
 }
-void RoomManager::RemoveRoom(int) { /* TODO 11/11 */ }
+void RoomManager::RemoveRoom(int roomNo)
+{
+    std::unique_ptr<Room> removed;
+    std::size_t remaining = 0;
+    EnterCriticalSection(&csRooms_);
+    const auto found = rooms_.find(roomNo);
+    if (found != rooms_.end())
+    {
+        removed = std::move(found->second);
+        rooms_.erase(found);
+    }
+    remaining = rooms_.size();
+    LeaveCriticalSection(&csRooms_);
+    if (!removed) return;
+    std::printf("[rooms] removed room %d, %u left\n", roomNo, static_cast<unsigned>(remaining));
+}
+
+std::size_t RoomManager::GetRoomCount() const
+{
+    EnterCriticalSection(&csRooms_);
+    const std::size_t count = rooms_.size();
+    LeaveCriticalSection(&csRooms_);
+    return count;
+}

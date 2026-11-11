@@ -15,7 +15,8 @@ public:
     RoomManager& operator=(const RoomManager&) = delete;
     Room* JoinRoom(int roomNo, ClientSession* s, int& outIdx, std::uint8_t& outResult);
     void RemoveRoom(int roomNo);
+    std::size_t GetRoomCount() const;
 private:
     std::unordered_map<int, std::unique_ptr<Room>> rooms_;
-    CRITICAL_SECTION csRooms_;
+    mutable CRITICAL_SECTION csRooms_;
 };
