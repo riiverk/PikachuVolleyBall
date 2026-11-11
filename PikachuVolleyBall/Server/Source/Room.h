@@ -12,6 +12,8 @@ public:
     ~Room();
     Room(const Room&) = delete;
     Room& operator=(const Room&) = delete;
+    int AddPlayer(ClientSession* s);
+    ClientSession* GetPlayer(int idx) const;
     void Start();
     static DWORD WINAPI RoomThread(LPVOID arg);
     void SetInput(int idx, std::uint8_t keys);

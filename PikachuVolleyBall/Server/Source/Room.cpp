@@ -3,6 +3,24 @@
 Room::Room() { InitializeCriticalSection(&csInput_); }
 Room::~Room() { DeleteCriticalSection(&csInput_); }
 
+int Room::AddPlayer(ClientSession* s)
+{
+    if (s == nullptr) return -1;
+    for (int i = 0; i < 2; ++i)
+    {
+        if (players_[i] != nullptr) continue;
+        players_[i] = s;
+        return i;
+    }
+    return -1;
+}
+
+ClientSession* Room::GetPlayer(int idx) const
+{
+    if (idx < 0 || idx >= 2) return nullptr;
+    return players_[idx];
+}
+
 void Room::Start() { /* TODO 11/12: create room thread. */ }
 DWORD WINAPI Room::RoomThread(LPVOID) { return ERROR_CALL_NOT_IMPLEMENTED; }
 void Room::SetInput(int, std::uint8_t) { /* TODO 11/13 */ }
