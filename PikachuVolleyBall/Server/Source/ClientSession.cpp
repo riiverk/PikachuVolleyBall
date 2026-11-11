@@ -201,6 +201,20 @@ void ClientSession::ProcessPacket(char* buf)
         playerIndex_ = seat;
         std::memcpy(nickname_, packet.nickname, MAX_NICK);
         LeaveCriticalSection(&stateLock_);
+        JoinResultPacket reply;
+        reply.result = static_cast<JoinResult>(result);
+        reply.myIndex = static_cast<std::uint8_t>(seat);
+        SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply));
+        if (reply.result != JoinResult::Matched) break;
+        ClientSession* other = joined->GetPlayer(1 - seat);
+        if (other != nullptr)
+        {
+            JoinResultPacket matched;
+            matched.result = JoinResult::Matched;
+            matched.myIndex = static_cast<std::uint8_t>(1 - seat);
+            other->SendPacket(reinterpret_cast<const char*>(&matched), sizeof(matched));
+        }
+        joined->Start();
         break;
     }
     case PacketType::INPUT:
