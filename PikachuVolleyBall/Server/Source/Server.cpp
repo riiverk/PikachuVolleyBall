@@ -1,5 +1,5 @@
 #include "Server.h"
-#include <conio.h>
+#include <cstdio>
 #include <new>
 
 Server::Server()
@@ -38,13 +38,15 @@ bool Server::InitServer(u_short port)
     lastError_ = startupError;
     if (startupError != 0)
     {
+        err_display(startupError); // ch02: WSAStartup returns the error code itself.
         LeaveCriticalSection(&stateLock_);
         return false;
     }
 
     SOCKET listener = INVALID_SOCKET;
-    auto fail = [this, &listener]() {
+    auto fail = [this, &listener](const char* what) {
         const int error = WSAGetLastError();
+        err_display(what);
         if (listener != INVALID_SOCKET) closesocket(listener);
         WSACleanup();
         lastError_ = error;
@@ -52,27 +54,22 @@ bool Server::InitServer(u_short port)
         return false;
     };
     listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listener == INVALID_SOCKET) return fail();
-
-    // Do not share an active game's port with a second server process.
-    const BOOL exclusive = TRUE;
-    if (setsockopt(listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
-        reinterpret_cast<const char*>(&exclusive), sizeof(exclusive)) == SOCKET_ERROR) return fail();
+    if (listener == INVALID_SOCKET) return fail("socket()");
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_ANY);
     address.sin_port = htons(port);
-    if (bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) return fail();
-    if (listen(listener, SOMAXCONN) == SOCKET_ERROR) return fail();
+    if (bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) return fail("bind()");
+    if (listen(listener, SOMAXCONN) == SOCKET_ERROR) return fail("listen()");
 
     // select + nonblocking accept lets shutdown stop the loop without closing
     // a socket underneath another thread's Winsock call.
     u_long nonblocking = 1;
-    if (ioctlsocket(listener, FIONBIO, &nonblocking) == SOCKET_ERROR) return fail();
+    if (ioctlsocket(listener, FIONBIO, &nonblocking) == SOCKET_ERROR) return fail("ioctlsocket()");
 
     int length = sizeof(address);
-    if (getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == SOCKET_ERROR) return fail();
+    if (getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length) == SOCKET_ERROR) return fail("getsockname()");
     listenSocket_ = listener;
     winsockStarted_ = true;
     port_ = ntohs(address.sin_port); // Port 0 requests an available port for tests.
@@ -83,19 +80,9 @@ bool Server::InitServer(u_short port)
     return true;
 }
 
-void Server::EnableConsoleExit()
-{
-    DWORD mode;
-    const bool hasConsole = GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode) != FALSE;
-    EnterCriticalSection(&stateLock_);
-    consoleExitEnabled_ = hasConsole;
-    LeaveCriticalSection(&stateLock_);
-}
-
 void Server::AcceptLoop()
 {
     SOCKET listener;
-    bool consoleExitEnabled;
     {
         EnterCriticalSection(&stateLock_);
         if (closing_ || stopping_ || listenSocket_ == INVALID_SOCKET)
@@ -112,18 +99,10 @@ void Server::AcceptLoop()
         accepting_ = true;
         ResetEvent(acceptStopped_);
         listener = listenSocket_;
-        consoleExitEnabled = consoleExitEnabled_;
         LeaveCriticalSection(&stateLock_);
     }
     while (!IsStopping())
     {
-        // The main thread checks Enter between socket waits; no input thread is needed.
-        if (consoleExitEnabled && _kbhit())
-        {
-            const int key = _getch();
-            if (key == '\r') break;
-            if (key == 0 || key == 0xe0) _getch(); // Consume an extended key's second byte.
-        }
         fd_set readable;
         FD_ZERO(&readable);
         FD_SET(listener, &readable);
@@ -131,21 +110,37 @@ void Server::AcceptLoop()
         const int ready = select(0, &readable, nullptr, nullptr, &timeout);
         if (ready == SOCKET_ERROR)
         {
+            err_display("select()");
             SetError(WSAGetLastError());
             break;
         }
         if (ready == 0 || IsStopping()) continue;
-        SOCKET accepted = accept(listener, nullptr, nullptr);
+        sockaddr_in clientaddr{};
+        int addrlen = sizeof(clientaddr);
+        SOCKET accepted = accept(listener, reinterpret_cast<sockaddr*>(&clientaddr), &addrlen);
         if (accepted == INVALID_SOCKET)
         {
             const int error = WSAGetLastError();
             if (error == WSAEWOULDBLOCK || error == WSAECONNRESET) continue;
+            err_display("accept()");
             SetError(error);
             break;
+        }
+        // Lecture ch04/ch06: print the connected client's address.
+        char addr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
+        std::printf("\n[TCP server] client connected: IP=%s, port=%d\n", addr, ntohs(clientaddr.sin_port));
+        if (!HasClientSlot())
+        {
+            // Lecture ch11: refuse the connection when the fixed client array is full.
+            std::printf("[error] cannot add more client information (max %d)\n", MAX_CLIENTS);
+            closesocket(accepted);
+            continue;
         }
         u_long blocking = 0;
         if (ioctlsocket(accepted, FIONBIO, &blocking) == SOCKET_ERROR)
         {
+            err_display("ioctlsocket()");
             SetError(WSAGetLastError());
             closesocket(accepted);
             continue;
@@ -164,23 +159,14 @@ void Server::AcceptLoop()
         }
         if (!session->Start())
         {
+            err_display(static_cast<int>(session->GetLastError())); // CreateThread failed
             SetError(static_cast<int>(session->GetLastError()));
             delete session;
             continue;
         }
         EnterCriticalSection(&stateLock_);
-        try
-        {
-            clients_.push_back(session);
-            ++acceptedCount_;
-        }
-        catch (const std::bad_alloc&)
-        {
-            lastError_ = WSAENOBUFS;
-            LeaveCriticalSection(&stateLock_);
-            delete session;
-            break;
-        }
+        clients_[clientCount_++] = session;
+        ++acceptedCount_;
         LeaveCriticalSection(&stateLock_);
     }
     {
@@ -208,12 +194,18 @@ void Server::CloseServer()
     port_ = 0;
     const bool cleanup = winsockStarted_;
     winsockStarted_ = false;
-    std::vector<ClientSession*> clients;
-    clients.swap(clients_);
+    ClientSession* clients[MAX_CLIENTS]{};
+    const int count = clientCount_;
+    for (int i = 0; i < count; ++i)
+    {
+        clients[i] = clients_[i];
+        clients_[i] = nullptr;
+    }
+    clientCount_ = 0;
     LeaveCriticalSection(&stateLock_);
     if (listener != INVALID_SOCKET) closesocket(listener);
-    // ClientSession's destructor shuts down its socket and waits for its worker.
-    for (ClientSession* client : clients) delete client;
+    // ClientSession's destructor closes its socket and waits for its worker.
+    for (int i = 0; i < count; ++i) delete clients[i];
     if (cleanup) WSACleanup();
     EnterCriticalSection(&stateLock_);
     closing_ = false;
@@ -232,7 +224,7 @@ u_short Server::GetPort() const
 std::size_t Server::GetClientCount() const
 {
     EnterCriticalSection(&stateLock_);
-    const std::size_t count = clients_.size();
+    const std::size_t count = static_cast<std::size_t>(clientCount_);
     LeaveCriticalSection(&stateLock_);
     return count;
 }
@@ -274,4 +266,37 @@ void Server::SetError(int error)
     EnterCriticalSection(&stateLock_);
     lastError_ = error;
     LeaveCriticalSection(&stateLock_);
+}
+
+// Called only by the accept loop, the only thread that adds sessions.
+bool Server::HasClientSlot()
+{
+    if (GetClientCount() < static_cast<std::size_t>(MAX_CLIENTS)) return true;
+    RemoveFinishedClients();
+    return GetClientCount() < static_cast<std::size_t>(MAX_CLIENTS);
+}
+
+// Lecture ch11 RemoveSocketInfo: move the last entry into the removed slot.
+// A session still referenced by a room is kept until CloseServer.
+void Server::RemoveFinishedClients()
+{
+    ClientSession* finished[MAX_CLIENTS]{};
+    int finishedCount = 0;
+    EnterCriticalSection(&stateLock_);
+    int i = 0;
+    while (i < clientCount_)
+    {
+        ClientSession* session = clients_[i];
+        if (session->WaitForFinish(0) && !session->IsInRoom())
+        {
+            finished[finishedCount++] = session;
+            clients_[i] = clients_[clientCount_ - 1];
+            clients_[clientCount_ - 1] = nullptr;
+            --clientCount_;
+            continue;
+        }
+        ++i;
+    }
+    LeaveCriticalSection(&stateLock_);
+    for (int j = 0; j < finishedCount; ++j) delete finished[j];
 }

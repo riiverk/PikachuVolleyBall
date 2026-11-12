@@ -1,4 +1,5 @@
 #include "Common.h"
+#include <cstdio>
 
 int recvn(SOCKET socket, char* buffer, int len, int flags)
 {
@@ -21,4 +22,28 @@ int recvn(SOCKET socket, char* buffer, int len, int flags)
         received += count;
     }
     return received;
+}
+
+void err_display(const char* msg)
+{
+    LPVOID lpMsgBuf;
+    FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+        NULL, WSAGetLastError(),
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (char*)&lpMsgBuf, 0, NULL);
+    std::printf("[%s] %s\n", msg, (char*)lpMsgBuf);
+    LocalFree(lpMsgBuf);
+}
+
+void err_display(int errcode)
+{
+    LPVOID lpMsgBuf;
+    FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+        NULL, errcode,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (char*)&lpMsgBuf, 0, NULL);
+    std::printf("[error %d] %s\n", errcode, (char*)lpMsgBuf);
+    LocalFree(lpMsgBuf);
 }

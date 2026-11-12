@@ -1,7 +1,5 @@
 #pragma once
 #include "Common.h"
-#include <memory>
-#include <unordered_map>
 
 class Room;
 class ClientSession;
@@ -9,6 +7,9 @@ class ClientSession;
 class RoomManager
 {
 public:
+    // Two players per room, so the server's client limit is also enough rooms.
+    static constexpr int MAX_ROOMS = FD_SETSIZE;
+
     RoomManager();
     ~RoomManager();
     RoomManager(const RoomManager&) = delete;
@@ -17,6 +18,11 @@ public:
     void RemoveRoom(int roomNo);
     std::size_t GetRoomCount() const;
 private:
-    std::unordered_map<int, std::unique_ptr<Room>> rooms_;
+    int FindRoom(int roomNo) const; // call inside csRooms_
+
+    // Lecture ch11 style fixed arrays: rooms_[i] has room number roomNos_[i].
+    Room* rooms_[MAX_ROOMS]{};
+    int roomNos_[MAX_ROOMS]{};
+    int roomCount_ = 0;
     mutable CRITICAL_SECTION csRooms_;
 };

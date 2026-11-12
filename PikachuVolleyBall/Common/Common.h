@@ -16,3 +16,7 @@
 // reads, including a close after receiving only part of the packet header.
 // The caller owns the socket, WSAStartup/WSACleanup, and any receive timeout.
 int recvn(SOCKET socket, char* buffer, int len, int flags = 0);
+
+// Lecture ch02: print a socket error code as text with FormatMessage.
+void err_display(const char* msg); // uses WSAGetLastError()
+void err_display(int errcode);     // uses a saved error code

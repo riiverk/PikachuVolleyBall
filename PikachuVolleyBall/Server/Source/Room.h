@@ -1,7 +1,6 @@
 #pragma once
 #include "Common.h"
 #include "GameWorld.h"
-#include <array>
 
 class ClientSession;
 
@@ -32,7 +31,7 @@ public:
     void OnChat(int idx, const char* msg);
 private:
     GameWorld world_;
-    std::array<ClientSession*, 2> players_{};
+    ClientSession* players_[2]{};
     std::uint8_t inputs_[2]{};
     bool nextStageReady_[2]{};
     CRITICAL_SECTION csInput_;

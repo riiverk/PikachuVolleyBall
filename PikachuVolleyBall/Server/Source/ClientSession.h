@@ -16,6 +16,7 @@ public:
     DWORD GetLastError() const;
     bool WaitForFinish(DWORD milliseconds) const;
     std::size_t GetReceivedCount() const;
+    bool IsInRoom() const;
     static DWORD WINAPI ClientThread(LPVOID arg);
     bool RecvPacket(char* buf);
     void ProcessPacket(char* buf);
@@ -33,7 +34,7 @@ private:
     DWORD lastError_ = 0;
     mutable CRITICAL_SECTION stateLock_;
     CRITICAL_SECTION csSend_;
-    volatile LONG disconnected_ = 0;
+    bool disconnected_ = false;
     bool stopping_ = false;
     std::size_t receivedCount_ = 0;
     RoomManager* rooms_ = nullptr;

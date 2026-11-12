@@ -21,8 +21,44 @@ ClientSession* Room::GetPlayer(int idx) const
     return players_[idx];
 }
 
-void Room::Start() { /* TODO 11/12: create room thread. */ }
-DWORD WINAPI Room::RoomThread(LPVOID) { return ERROR_CALL_NOT_IMPLEMENTED; }
+void Room::Start()
+{
+    if (thread_ != nullptr) return;
+
+    EnterCriticalSection(&csInput_);
+    for (int i = 0; i < 2; ++i)
+    {
+        inputs_[i] = 0;
+        nextStageReady_[i] = false;
+    }
+    LeaveCriticalSection(&csInput_);
+
+    world_.Reset(1, 0);
+
+    thread_ = CreateThread(nullptr, 0, RoomThread, this, 0, nullptr);
+    if (thread_ == nullptr)
+    {
+        std::printf("[room] CreateThread failed: %lu\n", GetLastError());
+        return;
+    }
+  
+    std::printf("[room] thread started\n");
+}
+DWORD WINAPI Room::RoomThread(LPVOID arg)
+{
+    Room* room = static_cast<Room*>(arg);
+    if (room == nullptr) return 1;
+
+    std::uint8_t inputs[2]{};
+    while (room->quitFlag_ == 0)
+    {
+        room->CopyInputs(inputs);
+        room->world_.Update(inputs);
+
+        room->SleepUntilNextTick();
+    }
+    return 0;
+}
 void Room::SetInput(int, std::uint8_t) { /* TODO 11/13 */ }
 void Room::CopyInputs(std::uint8_t out[2]) { out[0] = out[1] = 0; /* TODO 11/13 */ }
 void Room::SleepUntilNextTick() { /* TODO 11/14 */ }

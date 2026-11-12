@@ -61,6 +61,12 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
 {
     ClientSession* session = static_cast<ClientSession*>(arg);
     if (session == nullptr) return ERROR_INVALID_PARAMETER;
+    // Lecture ch06: get the client address from the socket with getpeername().
+    sockaddr_in clientaddr{};
+    int addrlen = sizeof(clientaddr);
+    char addr[INET_ADDRSTRLEN] = "unknown";
+    if (getpeername(session->GetSocket(), reinterpret_cast<sockaddr*>(&clientaddr), &addrlen) == 0)
+        inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
     char buffer[MAX_PACKET_SIZE]{};
     while (!session->IsStopping() && session->RecvPacket(buffer))
     {
@@ -73,6 +79,7 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
         LeaveCriticalSection(&session->stateLock_);
     }
     session->Disconnect();
+    std::printf("[TCP server] client closed: IP=%s, port=%d\n", addr, ntohs(clientaddr.sin_port));
     return session->GetLastError();
 }
 
@@ -129,6 +136,14 @@ std::size_t ClientSession::GetReceivedCount() const
     return count;
 }
 
+bool ClientSession::IsInRoom() const
+{
+    EnterCriticalSection(&stateLock_);
+    const bool inRoom = room_ != nullptr;
+    LeaveCriticalSection(&stateLock_);
+    return inRoom;
+}
+
 SOCKET ClientSession::GetSocket() const
 {
     EnterCriticalSection(&stateLock_);
@@ -139,10 +154,17 @@ SOCKET ClientSession::GetSocket() const
 
 bool ClientSession::ReceiveExact(SOCKET socket, char* buffer, int length, bool atPacketStart)
 {
-    const int count = recvn(socket, buffer, length, 0);
+    if (length == 0) return true;
+    // Lecture ch05: read a fixed length with recv(..., MSG_WAITALL).
+    // A short count means the peer closed; 0 at a packet boundary is a normal close.
+    const int count = recv(socket, buffer, length, MSG_WAITALL);
     if (count == length) return true;
     int error = WSAECONNRESET;
-    if (count == SOCKET_ERROR) error = WSAGetLastError();
+    if (count == SOCKET_ERROR)
+    {
+        error = WSAGetLastError();
+        if (!IsStopping()) err_display("recv()");
+    }
     else if (count == 0 && atPacketStart) error = 0;
     if (!IsStopping()) SetError(error);
     return false;
@@ -168,7 +190,8 @@ void ClientSession::CloseSocket()
     EnterCriticalSection(&stateLock_);
     if (socket_ != INVALID_SOCKET)
     {
-        shutdown(socket_, SD_BOTH);
+        // Lecture ch09: closesocket() starts the TCP close and frees the socket.
+        // It also cancels a blocking recv() waiting in this session's thread.
         closesocket(socket_);
         socket_ = INVALID_SOCKET;
     }
@@ -276,10 +299,10 @@ bool ClientSession::SendPacket(const char* buf, int len)
             break;
         }
         const int count = send(socket, buf + sent, len - sent, 0);
-        if (count == SOCKET_ERROR && WSAGetLastError() == WSAEINTR) continue;
         if (count <= 0)
         {
             error = count == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
+            if (count == SOCKET_ERROR && !IsStopping()) err_display("send()");
             EnterCriticalSection(&stateLock_);
             stopping_ = true;
             lastError_ = error;
@@ -300,8 +323,14 @@ bool ClientSession::SendPacket(const char* buf, int len)
 }
 void ClientSession::Disconnect()
 {
-    if (InterlockedExchange(&disconnected_, 1) == 1) return;
+    // Lecture ch06 critical section: only the first caller closes the connection.
     EnterCriticalSection(&stateLock_);
+    if (disconnected_)
+    {
+        LeaveCriticalSection(&stateLock_);
+        return;
+    }
+    disconnected_ = true;
     stopping_ = true;
     Room* room = room_;
     const int index = playerIndex_;
