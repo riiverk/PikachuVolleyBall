@@ -44,16 +44,22 @@ void GameWorld::Reset(int stage, int serveSide)
     }
     ResetBall(serveSide);
 }
+
 void GameWorld::Update(const std::uint8_t inputs[2])
 {
+    if (inputs == nullptr) throw std::invalid_argument("inputs must contain two player key states");
+    if (state_.phase != Phase::Ready && state_.phase != Phase::Playing) return;
+
     const PlayerState previousPlayers[GameConst::PlayerCount] = {state_.p[0], state_.p[1]};
     ApplyInputs(inputs);
+    state_.phase = Phase::Playing;
     StartSlides();
     MovePlayers();
     JumpPlayers();
     SlidePlayers();
     UpdateBall(previousPlayers);
-    /* TODO 11/11: integrate scoring and stage progression into the tick. */
+    CheckScore();
+    ++state_.tick;
 }
 
 void GameWorld::StartSlides()
