@@ -46,6 +46,14 @@ struct GameWorldTestAccess
     }
 };
 
+struct RendererTestAccess
+{
+    static COLORREF Pixel(const Renderer& renderer, int x, int y)
+    {
+        return GetPixel(renderer.backBufferDC_, x, y);
+    }
+};
+
 namespace
 {
 void Check(bool ok, const char* label)
@@ -463,6 +471,49 @@ void RendererInitializationTest()
     Check(GetGuiResources(process, GR_GDIOBJECTS) == baseline, "destruction releases the renderer's GDI objects");
     DestroyWindow(window);
     std::cout << "PASS: renderer initialization, shutdown and GDI resource ownership\n";
+}
+
+void RendererFrameTest()
+{
+    const HWND window = CreateWindowExW(0, L"STATIC", nullptr, WS_POPUP,
+        0, 0, 580, 415, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(window != nullptr, "create a window for the renderer frame test");
+    Renderer renderer;
+    Check(renderer.Initialize(window), "initialize the frame renderer");
+
+    GameStatePacket state;
+    state.phase = Phase::Playing;
+    state.p[0].x = 100; state.p[0].y = 520;
+    state.p[1].x = 900; state.p[1].y = 520;
+    state.ball.x = 380; state.ball.y = 280;
+    renderer.Render(state);
+
+    const auto pixel = [&renderer](int x, int y) { return RendererTestAccess::Pixel(renderer, x, y); };
+    const COLORREF sky = pixel(0, 0);
+    const COLORREF ground = pixel(GameConst::WindowWidth - 1, GameConst::WindowHeight - 1);
+    Check(sky != CLR_INVALID && ground != CLR_INVALID && sky != ground, "render sky and ground to the buffer edges");
+    const COLORREF leftPlayer = pixel(185, 605);
+    const COLORREF ball = pixel(430, 330);
+    // The same offset hits a red cheek on the left sprite and yellow on its mirror.
+    Check(pixel(159, 627) == RGB(159, 0, 0) && pixel(959, 627) == RGB(255, 255, 0),
+        "the right player is mirrored");
+    Check(ball == RGB(255, 247, 247), "draw the ball at its packet coordinates");
+
+    state.p[0].action = Action::Jump;
+    state.p[0].frame = 1;
+    state.p[1].evil = 1;
+    state.ball.x = 450;
+    const COLORREF warningBackground = pixel(945, 505);
+    renderer.Render(state);
+    Check(pixel(185, 605) != leftPlayer, "select the player sprite by packet action and frame");
+    Check(pixel(945, 505) != warningBackground, "draw the awakening warning");
+    Check(pixel(430, 330) != ball && pixel(500, 330) == ball, "redraw the ball without leaving its previous frame");
+
+    state.phase = Phase::StageOver;
+    renderer.Render(state);
+    Check(pixel(500, 330) != ball, "hide the ball after the stage ends");
+    DestroyWindow(window);
+    std::cout << "PASS: renderer draws the court and updates the player and ball sprites\n";
 }
 
 void InputManagerTest()
@@ -1785,7 +1836,11 @@ void LinkScaffolds()
 int main()
 {
     std::cout << std::unitbuf;
-    try { GameClientSceneTest(); RendererInitializationTest(); ServerConnectTest(); ServerAcceptTest(); }
+    try
+    {
+        GameClientSceneTest(); RendererInitializationTest(); RendererFrameTest();
+        ServerConnectTest(); ServerAcceptTest();
+    }
     catch (const std::exception& error)
     {
         std::cerr << "FAIL: " << error.what() << '\n';

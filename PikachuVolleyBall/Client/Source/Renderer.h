@@ -15,6 +15,10 @@ public:
     void Shutdown();
 
 private:
+    friend struct RendererTestAccess;
+
+    void DrawPlayer(const PlayerState& player, int side);
+
     HWND window_ = nullptr;
     HDC backBufferDC_ = nullptr;
     HBITMAP backBuffer_ = nullptr;
@@ -23,4 +27,7 @@ private:
     HBITMAP spriteSheet_ = nullptr;
     HGDIOBJ originalSprite_ = nullptr;
     HBITMAP warning_ = nullptr;
+    HDC mirroredSpriteDC_ = nullptr;
+    HBITMAP mirroredSprite_ = nullptr;
+    HGDIOBJ originalMirroredSprite_ = nullptr;
 };
