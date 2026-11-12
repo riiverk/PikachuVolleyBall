@@ -109,7 +109,22 @@ void GameWorld::ResetBall(int serveSide)
 void GameWorld::UpdateBall() { UpdateBall(state_.p); }
 void GameWorld::UpdateBall(const PlayerState (&previousPlayers)[2])
 {
-    AdvanceBall(state_.ball, state_.p, previousPlayers);
+    const BallState previous = state_.ball;
+    BallState next = previous;
+    MoveBallWithGravity(next);
+
+    BallState netBall = next;
+    BallState headBall = next;
+    float netTime = 0;
+    float headTime = 0;
+    const bool hitNet = ReflectBallAtNet(netBall, previous, &netTime);
+    const bool hitHead = ReflectBallAtPlayers(headBall, previous, state_.p, previousPlayers, headTime);
+    // Evaluate both contacts along the same movement and apply the earlier one.
+    if (hitHead && (!hitNet || headTime < netTime)) next = headBall;
+    else if (hitNet) next = netBall;
+
+    ReflectBallAtWalls(next);
+    state_.ball = next;
 }
 void GameWorld::CheckScore() { /* TODO 11/13: scoring. */ }
 void GameWorld::FillState(GameStatePacket& out) { out = state_; /* TODO 11/15 */ }

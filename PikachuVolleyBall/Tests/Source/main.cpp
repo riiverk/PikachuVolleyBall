@@ -18,10 +18,12 @@
 #include <utility>
 #include <vector>
 
-// Inspect stage bookkeeping without adding fields to the network protocol or public API.
-struct GameWorldResetTestAccess
+// Seed and inspect world state for integration tests through the existing public methods.
+struct GameWorldTestAccess
 {
     static void SetPhase(GameWorld& world, Phase phase) { world.state_.phase = phase; }
+    static void SetBall(GameWorld& world, const BallState& ball) { world.state_.ball = ball; }
+    static void SetPlayer(GameWorld& world, int index, const PlayerState& player) { world.state_.p[index] = player; }
 
     static void FinishFirstStage(GameWorld& world, int loser)
     {
@@ -49,6 +51,15 @@ namespace
 void Check(bool ok, const char* label)
 {
     if (!ok) throw std::runtime_error(label);
+}
+
+void AdvanceWorldBall(GameWorld& world, BallState& ball)
+{
+    GameWorldTestAccess::SetBall(world, ball);
+    world.UpdateBall();
+    GameStatePacket state;
+    world.FillState(state);
+    ball = state.ball;
 }
 
 struct Socket
@@ -948,6 +959,7 @@ void BallGravityTest()
 
 void BallWallTest()
 {
+    GameWorld world;
     auto close = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
     BallState ball{};
     ball.x = -5; ball.y = 100; ball.vx = -200; ball.vy = -300; ball.spike = 1;
@@ -971,20 +983,21 @@ void BallWallTest()
     ReflectBallAtWalls(ball);
     Check(close(ball.vx, -180) && ball.vy == 100, "exact wall and ceiling corner contact reflects both axes");
     ball = BallState{}; ball.x = 1; ball.y = -24; ball.vx = -200; ball.vy = -300;
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.x == 0 && ball.y == -25 && close(ball.vx, 180) && ball.vy == 284,
         "tick resolves wall and ceiling overshoot after applying gravity");
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.x > 0 && ball.y > -25 && close(ball.vx, 180) && ball.vy == 300,
         "next tick moves away from the corner without repeated damping");
     ball = BallState{}; ball.x = 100; ball.y = 800; ball.vy = 100;
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.y > 800 && ball.vy == 116, "wall reflection does not add a floor bounce");
     std::cout << "PASS: ball wall/ceiling reflection, damping, exact contact and tick integration\n";
 }
 
 void BallNetTest()
 {
+    GameWorld world;
     auto close = [](float a, float b) { return std::fabs(a - b) < 0.001f; };
     auto impact = [](BallState previous, float x, float y) {
         BallState next = previous; next.x = x; next.y = y;
@@ -1035,19 +1048,19 @@ void BallNetTest()
         "an overlapping ball can leave the net freely");
 
     ball = {459, 500, 400, -200, 0};
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.x == 460 && close(ball.vx, -380) && close(ball.vy, -165.6f),
         "tick applies gravity then reflects at the net side");
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.x < 460 && close(ball.vx, -380) && close(ball.vy, -149.6f),
         "following tick leaves the net without repeated reflection");
     ball = {500, 359, 100, 400, 0};
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.y == 360 && close(ball.vx, 95) && close(ball.vy, -374.4f), "tick bounces on the net top");
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.y < 360 && close(ball.vy, -358.4f), "top bounce rises away on the next tick");
     ball = {400, 500, 40000, -16, 0};
-    AdvanceBall(ball);
+    AdvanceWorldBall(world, ball);
     Check(ball.x == 460 && close(ball.vx, -38000), "net is hit before a distant wall on a fast crossing tick");
     std::cout << "PASS: ball net side/top reflection, swept collision, grazing, overlap recovery and successive ticks\n";
 }
@@ -1124,22 +1137,53 @@ void BallPlayerHitTest()
     previous = {120, 450, 0, 400, 0}; ball = previous; ball.y = 490;
     Check(ReflectBallAtPlayers(ball, previous, players, previousPlayers, time) && close(time, 0.5f) && close(ball.vx, 447),
         "moving head is tested at contact time rather than only at its endpoint");
-    players[0].x = 30;
+
+    previousPlayers[0].x = players[0].x = 385;
+    previousPlayers[0].y = 440; players[0].y = 458;
+    previous = {480, 340, 0, 1000, 0}; ball = previous; ball.y = 378;
+    Check(ReflectBallAtPlayers(ball, previous, players, previousPlayers, time) && close(time, 0.5f) && ball.y == 359,
+        "a descending head returns the ball at contact height above the net");
+
+    GameWorld world;
     ball = {65, 469, 0, 400, 0};
-    AdvanceBall(ball, players, players);
+    AdvanceWorldBall(world, ball);
     Check(ball.y == 470 && close(ball.vx, 450) && ball.vy == -600, "ball tick includes player collision after gravity");
-    AdvanceBall(ball, players, players);
+    AdvanceWorldBall(world, ball);
     Check(ball.y < 470 && ball.vy == -584 && close(ball.vx, 450), "following tick leaves the head without hitting twice");
-    players[0].x = 385; players[0].action = Action::Spike;
+    players[0].y = 560; players[0].action = Action::Spike;
+    GameWorldTestAccess::SetPlayer(world, 0, players[0]);
     ball = {350, 400, 8000, 6500, 0};
-    AdvanceBall(ball, players, players);
+    AdvanceWorldBall(world, ball);
     Check(ball.x < 460 && ball.y == 470 && ball.vx > 0 && ball.vy == -800 && ball.spike == 1,
         "head before net determines the collision response");
     ball = {350, 300, 8000, 9500, 0};
-    AdvanceBall(ball, players, players);
+    AdvanceWorldBall(world, ball);
     Check(ball.x == 460 && close(ball.vx, -7600) && ball.vy > 0 && ball.spike == 0,
         "net before head does not apply a later spike");
     std::cout << "PASS: player head returns/spikes, awakened force, moving heads, fast paths, misses and collision order\n";
+}
+
+void BallWallAndHeadTest()
+{
+    for (int side = 0; side < 2; ++side)
+    {
+        GameWorld world;
+        const float wall = side == 0 ? 0.0f : 1060.0f;
+        const float inward = side == 0 ? 1.0f : -1.0f;
+        BallState ball{wall + 5 * inward, 460, -450 * inward, 600, 1};
+        AdvanceWorldBall(world, ball);
+        Check(ball.x == wall && std::fabs(ball.vx - 405 * inward) < 0.001f && ball.vy == 616 && ball.spike == 1,
+            "wall reflection takes precedence over a head contact outside the court");
+        AdvanceWorldBall(world, ball);
+        Check(ball.y == 470 && ball.vx * inward > 0 && ball.vy == -600 && ball.spike == 0,
+            "the head can return the ball after the wall bounce");
+
+        ball = {wall + 10 * inward, 469, -450 * inward, 600, 1};
+        AdvanceWorldBall(world, ball);
+        Check((ball.x - wall) * inward > 0 && ball.y == 470 && ball.vx * inward > 0 && ball.vy == -600 && ball.spike == 0,
+            "a head contact still wins when it occurs inside the court before the wall");
+    }
+    std::cout << "PASS: GameWorld wall and head collision order on both sides of the court\n";
 }
 
 void BallPlayerWorldTest()
@@ -1198,7 +1242,7 @@ void StageResetTest()
         world.FillState(state);
         Check(state.size == sizeof(GameStatePacket) && state.type == PacketType::GAME_STATE &&
             state.phase == Phase::Ready && state.tick == 0, "reset prepares a fresh ready-state packet");
-        Check(GameWorldResetTestAccess::StageIsFresh(world, 1, side),
+        Check(GameWorldTestAccess::StageIsFresh(world, 1, side),
             "reset records stage/serve and clears scores and pending events");
         for (int i = 0; i < GameConst::PlayerCount; ++i)
         {
@@ -1234,11 +1278,11 @@ void StageResetTest()
             GameWorld world;
             const std::uint8_t active[2] = {UP | ACTION, LEFT | ACTION};
             world.Update(active);
-            GameWorldResetTestAccess::FinishFirstStage(world, loser);
+            GameWorldTestAccess::FinishFirstStage(world, loser);
             world.Reset(2, side);
             GameStatePacket state;
             world.FillState(state);
-            Check(GameWorldResetTestAccess::StageIsFresh(world, 2, side) &&
+            Check(GameWorldTestAccess::StageIsFresh(world, 2, side) &&
                 state.tick == 0 && state.phase == Phase::Ready,
                 "stage transition clears old score, events, tick and phase");
             Check(state.p[loser].evil == 1 && state.p[1 - loser].evil == 0 &&
@@ -1255,12 +1299,12 @@ void StageResetTest()
             world.Reset(2, side);
             world.FillState(state);
             Check(state.p[loser].evil == 1 && state.p[1 - loser].evil == 0 &&
-                GameWorldResetTestAccess::StageIsFresh(world, 2, side),
+                GameWorldTestAccess::StageIsFresh(world, 2, side),
                 "repeating a second-stage reset preserves its first-stage loser");
             world.Reset(1, 1 - side);
             world.FillState(state);
             Check(state.p[0].evil == 0 && state.p[1].evil == 0 &&
-                GameWorldResetTestAccess::StageIsFresh(world, 1, 1 - side),
+                GameWorldTestAccess::StageIsFresh(world, 1, 1 - side),
                 "a new first stage removes awakening from the previous match");
         }
     }
@@ -1325,7 +1369,7 @@ void GameWorldTickTest()
     const std::uint8_t idle[2]{};
     for (Phase phase : {Phase::ServeWait, Phase::StageOver, Phase::GameOver})
     {
-        GameWorldResetTestAccess::SetPhase(world, phase);
+        GameWorldTestAccess::SetPhase(world, phase);
         world.FillState(before);
         world.Update(idle);
         world.FillState(after);
@@ -1756,7 +1800,8 @@ int main()
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
         SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); JoinResultTest(); RoomRemoveTest();
-        BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallPlayerWorldTest(); StageResetTest(); GameWorldTickTest();
+        BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallWallAndHeadTest();
+        BallPlayerWorldTest(); StageResetTest(); GameWorldTickTest();
         ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();
         std::cout << "ALL FOUNDATION CHECKS PASSED\n";
     }

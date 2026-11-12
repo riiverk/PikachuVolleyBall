@@ -129,6 +129,9 @@ inline bool FindPlayerHeadContact(const BallState& ball, const BallState& previo
     }
     else contactTime = -startGap / (endGap - startGap);
     const float ballX = previous.x + (ball.x - previous.x) * contactTime;
+    // Only consider head contacts within the side walls.
+    if (ballX < GameConst::CourtLeft || ballX > GameConst::CourtRight - GameConst::BallCollisionSize)
+        return false;
     const float playerX = previousPlayer.x + (player.x - previousPlayer.x) * contactTime;
     return ballX + GameConst::BallCollisionSize > playerX + GameConst::PlayerHeadLeft &&
         ballX + GameConst::BallCollisionInset < playerX + GameConst::PlayerHeadRight;
@@ -153,8 +156,9 @@ inline bool ReflectBallAtPlayers(BallState& ball, const BallState& previous,
     const PlayerState& player = players[hitter];
     const PlayerState& previousPlayer = previousPlayers[hitter];
     ball.x = previous.x + (ball.x - previous.x) * earliest;
-    // Keep the ball above the head's final position when the player is jumping.
-    ball.y = static_cast<float>(player.y - GameConst::BallCollisionSize);
+    const float headY = previousPlayer.y + (player.y - previousPlayer.y) * earliest;
+    // Stop at contact height and lift the ball further if the head is still rising.
+    ball.y = std::min(headY, static_cast<float>(player.y)) - GameConst::BallCollisionSize;
     const float playerX = previousPlayer.x + (player.x - previousPlayer.x) * earliest;
     const bool spike = player.action == Action::Spike;
     const bool awakened = player.evil != 0;
@@ -168,27 +172,4 @@ inline bool ReflectBallAtPlayers(BallState& ball, const BallState& previous,
     ball.spike = spike ? 1 : 0;
     contactTime = earliest;
     return true;
-}
-
-inline void AdvanceBall(BallState& ball)
-{
-    const BallState previous = ball;
-    MoveBallWithGravity(ball);
-    ReflectBallAtNet(ball, previous);
-    ReflectBallAtWalls(ball);
-}
-
-inline void AdvanceBall(BallState& ball, const PlayerState (&players)[GameConst::PlayerCount],
-    const PlayerState (&previousPlayers)[GameConst::PlayerCount])
-{
-    const BallState previous = ball;
-    MoveBallWithGravity(ball);
-    BallState netBall = ball, headBall = ball;
-    float netTime = 2, headTime = 2;
-    const bool hitNet = ReflectBallAtNet(netBall, previous, &netTime);
-    const bool hitHead = ReflectBallAtPlayers(headBall, previous, players, previousPlayers, headTime);
-    // Resolve the first contact so a later obstacle cannot overwrite the earlier hit.
-    if (hitHead && (!hitNet || headTime < netTime)) ball = headBall;
-    else if (hitNet) ball = netBall;
-    ReflectBallAtWalls(ball);
 }

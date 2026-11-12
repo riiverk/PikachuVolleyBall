@@ -23,7 +23,7 @@ public:
     bool IsStageOver();
     int GetLoser();
 private:
-    friend struct GameWorldResetTestAccess;
+    friend struct GameWorldTestAccess;
     void UpdateBall(const PlayerState (&previousPlayers)[2]);
     void StartSlides();
     void MovePlayers();
