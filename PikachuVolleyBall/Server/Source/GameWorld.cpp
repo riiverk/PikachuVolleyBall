@@ -126,8 +126,32 @@ void GameWorld::UpdateBall(const PlayerState (&previousPlayers)[2])
     ReflectBallAtWalls(next);
     state_.ball = next;
 }
-void GameWorld::CheckScore() { /* TODO 11/13: scoring. */ }
+
+void GameWorld::CheckScore()
+{
+    constexpr float floorY = GameConst::CourtBottom - GameConst::BallCollisionSize;
+    if (state_.phase != Phase::Playing || state_.ball.y < floorY) return;
+
+    constexpr float netCenterX = (GameConst::NetLeft + GameConst::NetRight) / 2.0f;
+    const float ballCenterX = state_.ball.x + GameConst::BallCenterX;
+    const std::uint8_t scorer = ballCenterX < netCenterX ? 1 : 0;
+    events_.push_back({EventKind::Score, scorer});
+    ++scores_[scorer];
+
+    if (scores_[scorer] < GameConst::WinningScore)
+    {
+        ResetBall(scorer);
+        return;
+    }
+
+    state_.ball.y = floorY;
+    state_.ball.vx = 0;
+    state_.ball.vy = 0;
+    state_.ball.spike = 0;
+    state_.phase = stage_ == GameConst::StageCount ? Phase::GameOver : Phase::StageOver;
+}
+
 void GameWorld::FillState(GameStatePacket& out) { out = state_; /* TODO 11/15 */ }
 std::vector<GameEvent> GameWorld::PopEvents() { return {}; /* TODO 11/18 */ }
 bool GameWorld::IsStageOver() { return false; /* TODO 11/14 */ }
-int GameWorld::GetLoser() { return -1; /* No result until scoring is implemented. */ }
+int GameWorld::GetLoser() { return -1; /* TODO 11/14: read the stage result. */ }

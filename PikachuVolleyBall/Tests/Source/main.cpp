@@ -24,6 +24,8 @@ struct GameWorldTestAccess
     static void SetPhase(GameWorld& world, Phase phase) { world.state_.phase = phase; }
     static void SetBall(GameWorld& world, const BallState& ball) { world.state_.ball = ball; }
     static void SetPlayer(GameWorld& world, int index, const PlayerState& player) { world.state_.p[index] = player; }
+    static int Score(const GameWorld& world, int index) { return world.scores_[index]; }
+    static const std::vector<GameEvent>& Events(const GameWorld& world) { return world.events_; }
 
     static void FinishFirstStage(GameWorld& world, int loser)
     {
@@ -1436,6 +1438,64 @@ void GameWorldTickTest()
     std::cout << "PASS: GameWorld tick order, ready-to-playing transition, paused phases and stage restart\n";
 }
 
+void GameWorldScoreTest()
+{
+    GameWorld world;
+    const std::uint8_t idle[2]{};
+    GameStatePacket state;
+    const BallState onLeftFloor{450, 635, 0, 500, 1};
+    GameWorldTestAccess::SetBall(world, onLeftFloor);
+    world.CheckScore();
+    Check(GameWorldTestAccess::Events(world).empty(), "ready state does not score");
+
+    world.Reset(1, 0);
+    world.Update(idle);
+    GameWorldTestAccess::SetBall(world, {450, 634, 0, 0, 0});
+    world.CheckScore();
+    Check(GameWorldTestAccess::Events(world).empty(), "ball above the floor does not score");
+    GameWorldTestAccess::SetBall(world, onLeftFloor);
+    world.CheckScore();
+    world.CheckScore();
+    world.FillState(state);
+    const auto& events = GameWorldTestAccess::Events(world);
+    Check(GameWorldTestAccess::Score(world, 0) == 0 && GameWorldTestAccess::Score(world, 1) == 1 &&
+        events.size() == 1 && events.back().kind == EventKind::Score && events.back().who == 1,
+        "exact left floor contact awards one point to the right player");
+    Check(state.phase == Phase::Playing && state.ball.x == 980 && state.ball.y == 0 &&
+        state.ball.vx == 0 && state.ball.vy == 400 && state.ball.spike == 0,
+        "the right scorer serves the next ball with fresh velocity");
+
+    GameWorldTestAccess::SetBall(world, {565, 634, 0, 500, 0});
+    world.Update(idle);
+    world.FillState(state);
+    Check(GameWorldTestAccess::Score(world, 0) == 1 && GameWorldTestAccess::Score(world, 1) == 1 &&
+        events.size() == 2 && events.back().who == 0 && state.ball.x == 120 && state.ball.y == 0,
+        "a ball landing next to the right net edge scores through the normal tick");
+
+    for (int stage = 1; stage <= GameConst::StageCount; ++stage)
+    {
+        world.Reset(stage, 0);
+        world.Update(idle);
+        for (int point = 0; point < GameConst::WinningScore; ++point)
+        {
+            GameWorldTestAccess::SetBall(world, onLeftFloor);
+            world.CheckScore();
+        }
+        world.FillState(state);
+        Check(state.phase == (stage == 1 ? Phase::StageOver : Phase::GameOver) &&
+            state.ball.y == 635 && state.ball.vx == 0 && state.ball.vy == 0 && state.ball.spike == 0,
+            "the fifth point ends play and stops the ball on the floor");
+        world.CheckScore();
+        world.Update(idle);
+        GameStatePacket stopped;
+        world.FillState(stopped);
+        Check(GameWorldTestAccess::Score(world, 1) == 5 && events.size() == 5 &&
+            std::memcmp(&state, &stopped, sizeof(state)) == 0,
+            "finished play cannot advance or award duplicate points");
+    }
+    std::cout << "PASS: floor scoring on both courts, next serve, score events and five-point limit\n";
+}
+
 void ClientReceiveTest()
 {
     Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
@@ -1838,6 +1898,7 @@ int main()
     std::cout << std::unitbuf;
     try
     {
+        GameWorldScoreTest();
         GameClientSceneTest(); RendererInitializationTest(); RendererFrameTest();
         ServerConnectTest(); ServerAcceptTest();
     }

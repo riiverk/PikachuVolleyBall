@@ -6,7 +6,6 @@
 
 struct GameEvent { EventKind kind; std::uint8_t who; };
 
-// Stage reset, movement and court/net/player collisions are implemented; scoring follows.
 class GameWorld
 {
 public:
