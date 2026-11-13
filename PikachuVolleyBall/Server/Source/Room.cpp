@@ -1,4 +1,4 @@
-#include "Room.h"
+﻿#include "Room.h"
 
 Room::Room() { InitializeCriticalSection(&csInput_); }
 Room::~Room() { DeleteCriticalSection(&csInput_); }
@@ -59,8 +59,19 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
     }
     return 0;
 }
-void Room::SetInput(int, std::uint8_t) { /* TODO 11/13 */ }
-void Room::CopyInputs(std::uint8_t out[2]) { out[0] = out[1] = 0; /* TODO 11/13 */ }
+void Room::SetInput(int idx, std::uint8_t keys)
+{
+	EnterCriticalSection(&csInput_);
+    inputs_[idx] = keys;
+    LeaveCriticalSection(&csInput_);
+}
+void Room::CopyInputs(std::uint8_t out[2])
+{ 
+	EnterCriticalSection(&csInput_);
+	out[0] = inputs_[0];
+	out[1] = inputs_[1];
+	LeaveCriticalSection(&csInput_);
+}
 void Room::SleepUntilNextTick() { /* TODO 11/14 */ }
 void Room::Broadcast(const char*, int) { /* TODO 11/16 */ }
 void Room::BroadcastGameStart(int, int) { /* TODO 11/16 */ }
