@@ -1677,6 +1677,37 @@ void ClientProcessPacketTest()
     std::cout << "PASS: client ProcessPacket stores GAME_STATE and posts other server packets to the window\n";
 }
 
+void GameStateSnapshotTest()
+{
+    Listener listener;
+    NetworkClient client;
+    Check(client.Connect("127.0.0.1", listener.port), "connect client for world snapshot");
+    ClientSession session(listener.Accept());
+
+    GameWorld world;
+    const std::uint8_t keys[2] = {RIGHT | UP, LEFT | ACTION};
+    world.Update(keys);
+    GameStatePacket snapshot;
+    snapshot.size = 0;
+    snapshot.type = PacketType::INPUT;
+    std::as_const(world).FillState(snapshot);
+    Check(snapshot.size == 49 && snapshot.type == PacketType::GAME_STATE &&
+        snapshot.tick == 1 && snapshot.phase == Phase::Playing &&
+        snapshot.p[0].x == 40 && snapshot.p[0].y == 535 && snapshot.p[0].action == Action::Jump &&
+        snapshot.p[1].x == 936 && snapshot.p[1].y == 557 && snapshot.p[1].action == Action::Slide &&
+        snapshot.ball.x == 120.0f && snapshot.ball.vy == 416.0f,
+        "snapshot contains both players and the ball from the completed tick");
+
+    world.Update(keys);
+    Check(session.SendPacket(reinterpret_cast<const char*>(&snapshot), sizeof(snapshot)), "send captured world snapshot");
+    WaitUntil([&] { return client.GetReceivedCount() == 1; }, "client receives the snapshot");
+    GameStatePacket received;
+    client.GetLatestState(received);
+    Check(received.tick == 1 && std::memcmp(&received, &snapshot, sizeof(snapshot)) == 0,
+        "client receives all 49 bytes of the captured tick after the world advances");
+    std::cout << "PASS: GameWorld snapshot captured and received over TCP\n";
+}
+
 void ClientSessionRoundTripTest()
 {
     Listener listener;
@@ -1935,6 +1966,7 @@ int main()
     int code = 0;
     try
     {
+        GameStateSnapshotTest();
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();

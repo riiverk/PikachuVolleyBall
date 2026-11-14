@@ -17,7 +17,8 @@ public:
     void UpdateBall();
     void ResetBall(int serveSide);
     void CheckScore();
-    void FillState(GameStatePacket& out);
+    // Copy the current packet on the same thread that advances this world.
+    void FillState(GameStatePacket& out) const;
     std::vector<GameEvent> PopEvents();
     bool IsStageOver() const;
     int GetLoser() const; // Returns -1 until a player reaches the winning score.

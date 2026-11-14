@@ -154,7 +154,11 @@ void GameWorld::CheckScore()
     state_.phase = stage_ == GameConst::StageCount ? Phase::GameOver : Phase::StageOver;
 }
 
-void GameWorld::FillState(GameStatePacket& out) { out = state_; /* TODO 11/15 */ }
+void GameWorld::FillState(GameStatePacket& out) const
+{
+    out = state_;
+}
+
 std::vector<GameEvent> GameWorld::PopEvents() { return {}; /* TODO 11/18 */ }
 
 bool GameWorld::IsStageOver() const
