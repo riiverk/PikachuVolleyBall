@@ -37,4 +37,5 @@ private:
     CRITICAL_SECTION csInput_;
     volatile LONG quitFlag_ = 0;
     HANDLE thread_ = nullptr;
+    std::uint64_t nextTick_ = 0;
 };

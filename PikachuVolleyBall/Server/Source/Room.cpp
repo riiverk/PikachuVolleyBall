@@ -50,6 +50,7 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
     if (room == nullptr) return 1;
 
     std::uint8_t inputs[2]{};
+    room->nextTick_ = GetTickCount64();
     while (room->quitFlag_ == 0)
     {
         room->CopyInputs(inputs);
@@ -72,7 +73,15 @@ void Room::CopyInputs(std::uint8_t out[2])
 	out[1] = inputs_[1];
 	LeaveCriticalSection(&csInput_);
 }
-void Room::SleepUntilNextTick() { /* TODO 11/14 */ }
+void Room::SleepUntilNextTick() 
+{
+    nextTick_ += GameConst::TickMs;
+	const std::uint64_t now = GetTickCount64();
+    if (now < nextTick_)
+        Sleep(nextTick_ - now);
+    else if (now - nextTick_ > GameConst::TickMs * 5)   
+        nextTick_ = now;      
+}
 void Room::Broadcast(const char*, int) { /* TODO 11/16 */ }
 void Room::BroadcastGameStart(int, int) { /* TODO 11/16 */ }
 void Room::BroadcastState() { /* TODO 11/17 */ }
