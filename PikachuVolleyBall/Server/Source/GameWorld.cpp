@@ -17,8 +17,11 @@ void GameWorld::Reset(int stage, int serveSide)
     std::uint8_t awakened[GameConst::PlayerCount]{};
     if (stage == 2)
     {
-        if (stage_ == 1 && scores_[0] != scores_[1])
-            awakened[scores_[0] < scores_[1] ? 0 : 1] = 1;
+        if (stage_ == 1)
+        {
+            const int loser = GetLoser();
+            if (loser >= 0) awakened[loser] = 1;
+        }
         else if (stage_ == 2)
         {
             // Resetting the same second stage keeps the first-stage loser's awakening.
@@ -153,5 +156,15 @@ void GameWorld::CheckScore()
 
 void GameWorld::FillState(GameStatePacket& out) { out = state_; /* TODO 11/15 */ }
 std::vector<GameEvent> GameWorld::PopEvents() { return {}; /* TODO 11/18 */ }
-bool GameWorld::IsStageOver() { return false; /* TODO 11/14 */ }
-int GameWorld::GetLoser() { return -1; /* TODO 11/14: read the stage result. */ }
+
+bool GameWorld::IsStageOver() const
+{
+    return GetLoser() >= 0;
+}
+
+int GameWorld::GetLoser() const
+{
+    if (scores_[0] >= GameConst::WinningScore) return 1;
+    if (scores_[1] >= GameConst::WinningScore) return 0;
+    return -1;
+}

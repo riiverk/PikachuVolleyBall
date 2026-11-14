@@ -19,8 +19,8 @@ public:
     void CheckScore();
     void FillState(GameStatePacket& out);
     std::vector<GameEvent> PopEvents();
-    bool IsStageOver();
-    int GetLoser();
+    bool IsStageOver() const;
+    int GetLoser() const; // Returns -1 until a player reaches the winning score.
 private:
     friend struct GameWorldTestAccess;
     void UpdateBall(const PlayerState (&previousPlayers)[2]);

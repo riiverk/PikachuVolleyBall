@@ -1465,6 +1465,13 @@ void GameWorldScoreTest()
         state.ball.vx == 0 && state.ball.vy == 400 && state.ball.spike == 0,
         "the right scorer serves the next ball with fresh velocity");
 
+    GameWorld unfinished = world;
+    unfinished.Reset(2, 0);
+    GameStatePacket nextStage;
+    unfinished.FillState(nextStage);
+    Check(nextStage.p[0].evil == 0 && nextStage.p[1].evil == 0,
+        "an unfinished first-stage lead cannot awaken a loser");
+
     GameWorldTestAccess::SetBall(world, {565, 634, 0, 500, 0});
     world.Update(idle);
     world.FillState(state);
@@ -1472,28 +1479,44 @@ void GameWorldScoreTest()
         events.size() == 2 && events.back().who == 0 && state.ball.x == 120 && state.ball.y == 0,
         "a ball landing next to the right net edge scores through the normal tick");
 
-    for (int stage = 1; stage <= GameConst::StageCount; ++stage)
+    for (int firstLoser = 0; firstLoser < GameConst::PlayerCount; ++firstLoser)
     {
-        world.Reset(stage, 0);
-        world.Update(idle);
-        for (int point = 0; point < GameConst::WinningScore; ++point)
+        for (int stage = 1; stage <= GameConst::StageCount; ++stage)
         {
-            GameWorldTestAccess::SetBall(world, onLeftFloor);
+            world.Reset(stage, 0);
+            world.FillState(state);
+            Check(!world.IsStageOver() && world.GetLoser() == -1, "reset clears the stage result");
+            if (stage == 2)
+            {
+                Check(state.p[firstLoser].evil == 1 && state.p[1 - firstLoser].evil == 0,
+                    "the actual first-stage loser awakens at the next stage");
+            }
+            world.Update(idle);
+            // Swap winners in stage two to verify that the result comes from its own score.
+            const int loser = stage == 1 ? firstLoser : 1 - firstLoser;
+            const BallState landed{loser == 0 ? 450.0f : 600.0f, 635, 0, 500, 1};
+            for (int point = 0; point < GameConst::WinningScore; ++point)
+            {
+                Check(!world.IsStageOver() && world.GetLoser() == -1,
+                    "no stage result before the fifth point");
+                GameWorldTestAccess::SetBall(world, landed);
+                world.CheckScore();
+            }
+            world.FillState(state);
+            Check(world.IsStageOver() && world.GetLoser() == loser &&
+                state.phase == (stage == 1 ? Phase::StageOver : Phase::GameOver) &&
+                state.ball.y == 635 && state.ball.vx == 0 && state.ball.vy == 0 && state.ball.spike == 0,
+                "the fifth point ends play and identifies the losing player");
             world.CheckScore();
+            world.Update(idle);
+            GameStatePacket stopped;
+            world.FillState(stopped);
+            Check(GameWorldTestAccess::Score(world, 1 - loser) == 5 && events.size() == 5 &&
+                std::memcmp(&state, &stopped, sizeof(state)) == 0,
+                "finished play cannot advance or award duplicate points");
         }
-        world.FillState(state);
-        Check(state.phase == (stage == 1 ? Phase::StageOver : Phase::GameOver) &&
-            state.ball.y == 635 && state.ball.vx == 0 && state.ball.vy == 0 && state.ball.spike == 0,
-            "the fifth point ends play and stops the ball on the floor");
-        world.CheckScore();
-        world.Update(idle);
-        GameStatePacket stopped;
-        world.FillState(stopped);
-        Check(GameWorldTestAccess::Score(world, 1) == 5 && events.size() == 5 &&
-            std::memcmp(&state, &stopped, sizeof(state)) == 0,
-            "finished play cannot advance or award duplicate points");
     }
-    std::cout << "PASS: floor scoring on both courts, next serve, score events and five-point limit\n";
+    std::cout << "PASS: floor scoring, five-point stage results, loser awakening and reset\n";
 }
 
 void ClientReceiveTest()
