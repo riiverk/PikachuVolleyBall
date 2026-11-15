@@ -38,4 +38,5 @@ private:
     volatile LONG quitFlag_ = 0;
     HANDLE thread_ = nullptr;
     std::uint64_t nextTick_ = 0;
+    int stage_ = 1;
 };

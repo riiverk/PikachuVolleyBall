@@ -50,14 +50,39 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
     if (room == nullptr) return 1;
 
     std::uint8_t inputs[2]{};
-    room->nextTick_ = GetTickCount64();
-    while (room->quitFlag_ == 0)
-    {
-        room->CopyInputs(inputs);
-        room->world_.Update(inputs);
+    int serve = 0;
 
-        room->SleepUntilNextTick();
+    for (int stage = 1; stage <= GameConst::StageCount; ++stage)
+    {
+        room->stage_ = stage;
+        room->world_.Reset(stage, serve);
+        room->BroadcastGameStart(stage, serve);
+        room->nextTick_ = GetTickCount64();
+
+        while (room->quitFlag_ == 0 && !room->world_.IsStageOver())
+        {
+            room->CopyInputs(inputs);
+            room->world_.Update(inputs);
+            room->BroadcastState();
+            room->BroadcastEvents();
+            room->SleepUntilNextTick();
+        }
+        if (room->quitFlag_) return 0;
+
+        const int winner = 1 - room->world_.GetLoser();
+        room->BroadcastStageOver();
+
+        if (stage == GameConst::StageCount)
+        {
+            room->BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Normal));
+            break;
+        }
+
+        serve = winner;
+        if (!room->WaitNextStage()) return 0;
     }
+
+ 
     return 0;
 }
 void Room::SetInput(int idx, std::uint8_t keys)
