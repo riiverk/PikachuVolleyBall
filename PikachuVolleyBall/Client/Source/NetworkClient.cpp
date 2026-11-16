@@ -73,17 +73,17 @@ bool NetworkClient::Connect(const char* ip, u_short port)
     if (recvThread_ == nullptr) return fail(static_cast<int>(::GetLastError()));
     return true;
 }
-void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
+bool NetworkClient::SendJoinRoom(int roomNo, const char* nick)
 {
     if (!IsConnected())
     {
         SetError(WSAENOTCONN);
-        return;
+        return false;
     }
     if (roomNo <= 0 || nick == nullptr)
     {
         SetError(WSAEINVAL);
-        return;
+        return false;
     }
     int length = 0;
     while (length < MAX_NICK && nick[length] != '\0') ++length;
@@ -91,12 +91,14 @@ void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
         MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, nick, length, nullptr, 0) == 0)
     {
         SetError(WSAEINVAL);
-        return;
+        return false;
     }
     JoinRoomPacket packet;
     packet.roomNo = roomNo;
     std::memcpy(packet.nickname, nick, length);
-    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) SetError(0);
+    if (!SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) return false;
+    SetError(0);
+    return true;
 }
 
 bool NetworkClient::SendAll(const char* data, int length)

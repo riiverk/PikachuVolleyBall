@@ -5,7 +5,7 @@
 namespace
 {
 constexpr int panelWidth = 414;
-constexpr int panelHeight = 444;
+constexpr int panelHeight = 484;
 constexpr int padding = 30;
 constexpr COLORREF ink = RGB(24, 42, 69);
 constexpr COLORREF paper = RGB(255, 252, 237);
@@ -73,8 +73,9 @@ bool ConnectScreen::Create(HWND window, HINSTANCE instance)
         {RoomNumber, L"EDIT", L"1", WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
         {NickLabel, L"STATIC", L"닉네임", SS_LEFT, 0},
         {Nickname, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
-        {JoinButton, L"BUTTON", L"서버 접속 (준비 중)", BS_OWNERDRAW | WS_DISABLED, 0},
-        {LocalPlayButton, L"BUTTON", L"로컬 2인 대전", BS_OWNERDRAW | WS_TABSTOP, 0}
+        {JoinButton, L"BUTTON", L"서버 접속", BS_OWNERDRAW | WS_TABSTOP, 0},
+        {LocalPlayButton, L"BUTTON", L"로컬 2인 대전", BS_OWNERDRAW | WS_TABSTOP, 0},
+        {Status, L"STATIC", L"", SS_LEFT, 0}
     };
 
     const HFONT controlFont = font_ ? font_ : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
@@ -117,6 +118,7 @@ void ConnectScreen::Layout(HWND window) const
     move(Nickname, 292, 32);
     move(JoinButton, 342, 38);
     move(LocalPlayButton, 390, 34);
+    move(Status, 437, 30);
     InvalidateRect(window, nullptr, FALSE);
 }
 
@@ -192,7 +194,7 @@ void ConnectScreen::PaintButton(const DRAWITEMSTRUCT& item) const
 
 void ConnectScreen::Destroy(HWND window)
 {
-    for (int id = IpLabel; id <= LocalPlayButton; ++id)
+    for (int id = IpLabel; id <= Status; ++id)
         if (const HWND control = GetDlgItem(window, id)) DestroyWindow(control);
     if (font_) DeleteObject(font_);
     if (sprites_) DeleteObject(sprites_);

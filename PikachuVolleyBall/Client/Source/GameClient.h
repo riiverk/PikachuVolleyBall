@@ -4,10 +4,15 @@
 #include "Renderer.h"
 
 enum class Scene { Connect, Waiting, Playing, StageOver, Result };
+enum class JoinRequestResult { Sent, InvalidAddress, InvalidRoom, InvalidNickname, ConnectionFailed, SendFailed };
 
 class GameClient
 {
 public:
+    JoinRequestResult ConnectAndJoin(const wchar_t* address, const wchar_t* room, const wchar_t* nickname,
+        u_short port = SERVERPORT);
+    bool IsConnected() const { return network_.IsConnected(); }
+    void Disconnect() { network_.Disconnect(); }
     void ChangeScene(Scene scene);
     void OnKey(UINT msg, WPARAM key);
     void OnNetEvent(WPARAM type, LPARAM pkt);

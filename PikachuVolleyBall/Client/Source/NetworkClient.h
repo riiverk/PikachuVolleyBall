@@ -13,7 +13,7 @@ public:
     NetworkClient& operator=(const NetworkClient&) = delete;
     void SetWindow(HWND window);
     bool Connect(const char* ip, u_short port);
-    void SendJoinRoom(int roomNo, const char* nick);
+    bool SendJoinRoom(int roomNo, const char* nick);
     static DWORD WINAPI RecvThread(LPVOID arg);
     void ProcessPacket(char* buf);
     void SendInput(std::uint8_t keys);

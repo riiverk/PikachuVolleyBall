@@ -311,6 +311,37 @@ void ClientFailureTest()
     std::cout << "PASS: invalid addresses, connection refusal and retry on the same client\n";
 }
 
+void GameClientJoinTest()
+{
+    GameClient client;
+    Listener listener;
+    Check(client.ConnectAndJoin(L"999.0.0.1", L"27", L"피카츄", listener.port) == JoinRequestResult::InvalidAddress,
+        "reject an invalid IPv4 address");
+    for (const wchar_t* room : {L"0", L"2147483648", L"27a"})
+        Check(client.ConnectAndJoin(L"127.0.0.1", room, L"피카츄", listener.port) == JoinRequestResult::InvalidRoom,
+            "reject room numbers outside the positive int range or with non-digits");
+    for (const wchar_t* nick : {L"", L"피카츄배구팀"})
+        Check(client.ConnectAndJoin(L"127.0.0.1", L"27", nick, listener.port) == JoinRequestResult::InvalidNickname,
+            "reject empty nicknames or UTF-8 nicknames that do not fit in the packet");
+    Check(!client.IsConnected(), "invalid form fields leave the client disconnected");
+
+    Check(client.ConnectAndJoin(L"127.0.0.1", L"27", L"피카츄배구", listener.port) == JoinRequestResult::Sent,
+        "connect and send a join request on retry");
+    Socket peer;
+    peer.value = listener.Accept();
+    const DWORD timeout = 2000;
+    Check(setsockopt(peer.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0,
+        "set join request receive timeout");
+    JoinRoomPacket packet;
+    Check(recvn(peer.value, reinterpret_cast<char*>(&packet), sizeof(packet)) == sizeof(packet) &&
+        packet.type == PacketType::JOIN_ROOM && packet.size == sizeof(packet) &&
+        packet.roomNo == 27 && std::strcmp(packet.nickname, "피카츄배구") == 0,
+        "send the entered room and UTF-8 nickname in one JOIN_ROOM packet");
+    client.Disconnect();
+    Check(!client.IsConnected(), "disconnect the online client before entering local play");
+    std::cout << "PASS: game client validates the connection form and sends JOIN_ROOM\n";
+}
+
 template<class Predicate> void WaitUntil(Predicate predicate, const char* label)
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -1979,7 +2010,7 @@ int main()
     {
         GameStateSnapshotTest();
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
-        ClientFailureTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
+        ClientFailureTest(); GameClientJoinTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
         SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); JoinResultTest(); RoomRemoveTest();
         BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallWallAndHeadTest();

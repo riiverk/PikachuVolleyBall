@@ -4,7 +4,7 @@
 class ConnectScreen
 {
 public:
-    enum Control { IpLabel = 1001, ServerIp, RoomLabel, RoomNumber, NickLabel, Nickname, JoinButton, LocalPlayButton };
+    enum Control { IpLabel = 1001, ServerIp, RoomLabel, RoomNumber, NickLabel, Nickname, JoinButton, LocalPlayButton, Status };
 
     void LimitWindowSize(HWND window, MINMAXINFO& limits) const;
     bool Create(HWND window, HINSTANCE instance);
