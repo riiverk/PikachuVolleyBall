@@ -1,6 +1,7 @@
 #include "Renderer.h"
 #include "resource.h"
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 
 #pragma comment(lib, "msimg32.lib")
@@ -36,6 +37,24 @@ void DrawSprite(HDC target, HDC source, const Sprite& sprite, int x, int y, int 
 {
     TransparentBlt(target, x, y, width, height, source,
         sprite.x, sprite.y, sprite.width, sprite.height, RGB(255, 255, 255));
+}
+
+void DrawScore(HDC target, HDC atlas, std::uint8_t score, int edge, bool alignRight)
+{
+    constexpr int digitSize = 64;
+    constexpr int top = 50;
+    char digits[3]; // A uint8_t score is at most 255.
+    const auto end = std::to_chars(digits, digits + sizeof(digits), score).ptr;
+    const int width = static_cast<int>(end - digits) * digitSize;
+    int x = alignRight ? edge - width : edge;
+    for (const char* digit = digits; digit != end; ++digit, x += digitSize)
+    {
+        const int value = *digit - '0';
+        const Sprite sprite = value < 8
+            ? Sprite{204 + 34 * value, 124, 32, 32}
+            : Sprite{2 + 34 * (value - 8), 158, 32, 32};
+        DrawSprite(target, atlas, sprite, x, top, digitSize, digitSize);
+    }
 }
 
 void DrawCourt(HDC target, HDC atlas, std::uint32_t tick)
@@ -212,7 +231,7 @@ void Renderer::DrawPlayer(const PlayerState& player, int side)
     }
 }
 
-void Renderer::Render(const GameStatePacket& state)
+void Renderer::Render(const GameStatePacket& state, std::array<std::uint8_t, GameConst::PlayerCount> scores)
 {
     if (!window_) return;
     RECT client{};
@@ -223,6 +242,10 @@ void Renderer::Render(const GameStatePacket& state)
         DrawPlayer(state.p[side], side);
     if (state.phase != Phase::StageOver && state.phase != Phase::GameOver)
         DrawBall(backBufferDC_, spriteDC_, state.ball, state.tick);
+
+    constexpr int scoreMargin = 50;
+    DrawScore(backBufferDC_, spriteDC_, scores[0], scoreMargin, false);
+    DrawScore(backBufferDC_, spriteDC_, scores[1], GameConst::WindowWidth - scoreMargin, true);
 
     const HDC windowDC = GetDC(window_);
     if (!windowDC) return;

@@ -1,5 +1,6 @@
 #pragma once
 #include "Common.h"
+#include <array>
 
 // Online renderer for server game states.
 class Renderer
@@ -11,7 +12,7 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     bool Initialize(HWND window);
-    void Render(const GameStatePacket& state);
+    void Render(const GameStatePacket& state, std::array<std::uint8_t, GameConst::PlayerCount> scores = {});
     void Shutdown();
 
 private:

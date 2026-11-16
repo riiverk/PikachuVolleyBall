@@ -500,22 +500,33 @@ void RendererFrameTest()
     Check(pixel(159, 627) == RGB(159, 0, 0) && pixel(959, 627) == RGB(255, 255, 0),
         "the right player is mirrored");
     Check(ball == RGB(255, 247, 247), "draw the ball at its packet coordinates");
+    Check(pixel(70, 70) == RGB(255, 0, 0) && pixel(1066, 70) == RGB(255, 0, 0),
+        "draw an initial zero for each player");
+    const COLORREF thirdDigitBackground = pixel(198, 70);
 
     state.p[0].action = Action::Jump;
     state.p[0].frame = 1;
     state.p[1].evil = 1;
     state.ball.x = 450;
     const COLORREF warningBackground = pixel(945, 505);
-    renderer.Render(state);
+    renderer.Render(state, {8, 9});
     Check(pixel(185, 605) != leftPlayer, "select the player sprite by packet action and frame");
     Check(pixel(945, 505) != warningBackground, "draw the awakening warning");
     Check(pixel(430, 330) != ball && pixel(500, 330) == ball, "redraw the ball without leaving its previous frame");
+    Check(pixel(82, 82) == RGB(0, 0, 0) && pixel(1078, 82) == RGB(255, 0, 0),
+        "draw distinct scores using the sprites for eight and nine");
+
+    renderer.Render(state, {255, 9});
+    Check(pixel(82, 82) == RGB(255, 0, 0) && pixel(198, 70) == RGB(255, 0, 0) &&
+        pixel(1078, 82) == RGB(255, 0, 0), "draw a three-digit score without shifting the other player's score");
 
     state.phase = Phase::StageOver;
-    renderer.Render(state);
+    renderer.Render(state, {0, 9});
     Check(pixel(500, 330) != ball, "hide the ball after the stage ends");
+    Check(pixel(198, 70) == thirdDigitBackground && pixel(1078, 82) == RGB(255, 0, 0),
+        "clear old digits when a score shrinks and keep the score visible at stage end");
     DestroyWindow(window);
-    std::cout << "PASS: renderer draws the court and updates the player and ball sprites\n";
+    std::cout << "PASS: renderer draws the court and updates player, ball and score sprites\n";
 }
 
 void InputManagerTest()
