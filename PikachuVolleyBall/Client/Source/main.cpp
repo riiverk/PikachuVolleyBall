@@ -1,9 +1,9 @@
 #define _CRT_SECURE_NO_WARNINGS
+#include "ConnectScreen.h"
 #include "GameState.h"
 #include "GameInput.h"
 #include "GameUpdate.h"
 #include "GameRenderer.h"
-#include <algorithm>
 #include <filesystem>
 
 #pragma comment(lib, "msimg32.lib")
@@ -11,29 +11,8 @@
 
 namespace
 {
-enum ConnectControl { ConnectTitle = 1001, ConnectButton, LocalPlayButton };
+ConnectScreen connectScreen;
 bool localGameStarted = false;
-
-HWND CreateConnectControl(HWND window, ConnectControl id, const wchar_t* type, const wchar_t* label, DWORD style)
-{
-	const HWND control = CreateWindowW(type, label, WS_CHILD | WS_VISIBLE | style,
-		0, 0, 0, 0, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_hInst, nullptr);
-	if (control)
-		SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), FALSE);
-	return control;
-}
-
-void LayoutConnectScreen(HWND window)
-{
-	RECT client{};
-	GetClientRect(window, &client);
-	const int width = std::min(280L, client.right);
-	const int x = (client.right - width) / 2;
-	const int y = std::max(0L, (client.bottom - 126) / 2);
-	MoveWindow(GetDlgItem(window, ConnectTitle), x, y, width, 24, TRUE);
-	MoveWindow(GetDlgItem(window, ConnectButton), x, y + 34, width, 38, TRUE);
-	MoveWindow(GetDlgItem(window, LocalPlayButton), x, y + 84, width, 38, TRUE);
-}
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam);
@@ -84,6 +63,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {
 	if (iMsg == WM_DESTROY)
 	{
+		if (!localGameStarted) connectScreen.Destroy(hWnd);
 		KillTimer(hWnd, 2);
 		KillTimer(hWnd, GameConst::FrameTimerId);
 		KillTimer(hWnd, BallRotate);
@@ -96,27 +76,31 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		switch (iMsg)
 		{
 		case WM_CREATE:
-			if (!CreateConnectControl(hWnd, ConnectTitle, L"STATIC", L"온라인 대전 접속", SS_CENTER) ||
-				!CreateConnectControl(hWnd, ConnectButton, L"BUTTON", L"서버 접속 (준비 중)", WS_DISABLED) ||
-				!CreateConnectControl(hWnd, LocalPlayButton, L"BUTTON", L"로컬 2인 대전", WS_TABSTOP | BS_DEFPUSHBUTTON))
-				return -1;
-			LayoutConnectScreen(hWnd);
+			return connectScreen.Create(hWnd, g_hInst) ? 0 : -1;
+		case WM_GETMINMAXINFO:
+			connectScreen.LimitWindowSize(hWnd, *reinterpret_cast<MINMAXINFO*>(lParam));
 			return 0;
 		case WM_SIZE:
-			LayoutConnectScreen(hWnd);
+			connectScreen.Layout(hWnd);
 			return 0;
+		case WM_ERASEBKGND:
+			return TRUE;
+		case WM_PAINT:
+			connectScreen.Paint(hWnd);
+			return 0;
+		case WM_CTLCOLORSTATIC:
+			return reinterpret_cast<LRESULT>(connectScreen.PaintLabel(reinterpret_cast<HDC>(wParam)));
+		case WM_DRAWITEM:
+			connectScreen.PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+			return TRUE;
 		case WM_SETFOCUS:
-			SetFocus(GetDlgItem(hWnd, LocalPlayButton));
+			SetFocus(GetDlgItem(hWnd, ConnectScreen::ServerIp));
 			return 0;
-		case DM_GETDEFID:
-			return MAKELRESULT(LocalPlayButton, DC_HASDEFID);
 		case WM_COMMAND:
-			if (LOWORD(wParam) == LocalPlayButton && HIWORD(wParam) == BN_CLICKED)
+			if (LOWORD(wParam) == ConnectScreen::LocalPlayButton && HIWORD(wParam) == BN_CLICKED)
 			{
 				localGameStarted = true;
-				DestroyWindow(GetDlgItem(hWnd, ConnectTitle));
-				DestroyWindow(GetDlgItem(hWnd, ConnectButton));
-				DestroyWindow(GetDlgItem(hWnd, LocalPlayButton));
+				connectScreen.Destroy(hWnd);
 				SetFocus(hWnd);
 				InitializeGame(hWnd);
 				InvalidateRect(hWnd, nullptr, TRUE);

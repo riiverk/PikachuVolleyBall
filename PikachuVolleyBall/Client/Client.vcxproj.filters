@@ -10,6 +10,9 @@
     <ClCompile Include="Source\BallPhysics.cpp">
       <Filter>Source</Filter>
     </ClCompile>
+    <ClCompile Include="Source\ConnectScreen.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
     <ClCompile Include="Source\GameClient.cpp">
       <Filter>Source</Filter>
     </ClCompile>
@@ -52,6 +55,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\BallPhysics.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\ConnectScreen.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\GameClient.h">
