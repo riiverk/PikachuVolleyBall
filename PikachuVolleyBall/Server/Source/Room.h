@@ -41,4 +41,5 @@ private:
     HANDLE thread_ = nullptr;
     std::uint64_t nextTick_ = 0;
     int stage_ = 1;
+    bool left[2]{};
 };

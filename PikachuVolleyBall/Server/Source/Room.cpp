@@ -82,7 +82,11 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
 
     for (int stage = 1; stage <= GameConst::StageCount; ++stage)
     {
-        if (InterlockedCompareExchange(&room->quitFlag_, 0, 0) != 0) return 0;
+        if (InterlockedCompareExchange(&room->quitFlag_, 0, 0))
+        {
+            room->EndByQuit();
+            return 0;
+        }
         room->stage_ = stage;
         room->world_.Reset(stage, serve);
         room->BroadcastGameStart(stage, serve);
@@ -96,7 +100,11 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
             room->BroadcastEvents();
             room->SleepUntilNextTick();
         }
-        if (InterlockedCompareExchange(&room->quitFlag_, 0, 0) != 0) return 0;
+        if (InterlockedCompareExchange(&room->quitFlag_, 0, 0))
+        {
+            room->EndByQuit();
+            return 0;
+        }
 
         const int winner = 1 - room->world_.GetLoser();
         room->BroadcastStageOver();
@@ -108,7 +116,11 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
         }
 
         serve = winner;
-        if (!room->WaitNextStage()) return 0;
+        if (!room->WaitNextStage())
+        {
+            room->EndByQuit();
+            return 0;
+        }
     }
 
  
@@ -163,6 +175,16 @@ void Room::BroadcastStageOver() { /* TODO 11/20 */ }
 void Room::BroadcastGameOver(std::uint8_t) { /* TODO 11/21 */ }
 void Room::OnNextStage(int) { /* TODO 11/23 */ }
 bool Room::WaitNextStage() { return false; /* TODO 11/22 */ }
-void Room::OnPlayerLeave(int) { /* TODO 11/16 */ }
-void Room::EndByQuit() { /* TODO 11/24 */ }
+void Room::OnPlayerLeave(int idx)
+{
+    if (idx < 0 || idx >= GameConst::PlayerCount) return;
+
+    EnterCriticalSection(&csInput_);
+    left[idx] = true;
+    LeaveCriticalSection(&csInput_);
+
+    InterlockedExchange(&quitFlag_, 1);
+    std::printf("[room] Player %d left\n", idx);
+}
+void Room::EndByQuit() { /* TODO 11/24 */ } // left가 모두 false면 아무것도 하지 않도록 할 것
 void Room::OnChat(int, const char*) { /* TODO 11/24 */ }
