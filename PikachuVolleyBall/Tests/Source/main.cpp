@@ -1894,18 +1894,42 @@ void JoinResultTest()
     Socket first, second, lone;
     connectRaw(first); connectRaw(second); connectRaw(lone);
     join(first, 12, "red");
-    JoinResultPacket reply = receive(first);
-    Check(reply.result == JoinResult::Waiting && reply.myIndex == 0, "first player gets Waiting in seat 0");
-    join(second, 12, "blue");
-    reply = receive(second);
-    Check(reply.result == JoinResult::Matched && reply.myIndex == 1, "second player gets Matched in seat 1");
-    reply = receive(first);
-    Check(reply.result == JoinResult::Matched && reply.myIndex == 0, "first player is told about the match");
+    join(second, 12, "피카츄피카");
+    const JoinResultPacket firstReply = receive(first);
+    const JoinResultPacket secondReply = receive(second);
+    Socket& waiting = firstReply.myIndex == 0 ? first : second;
+    const JoinResultPacket& waitingReply = firstReply.myIndex == 0 ? firstReply : secondReply;
+    const JoinResultPacket& matchedReply = firstReply.myIndex == 0 ? secondReply : firstReply;
+    Check(waitingReply.result == JoinResult::Waiting && waitingReply.myIndex == 0, "seat 0 first gets Waiting");
+    Check(matchedReply.result == JoinResult::Matched && matchedReply.myIndex == 1, "seat 1 gets Matched");
+    JoinResultPacket reply = receive(waiting);
+    Check(reply.result == JoinResult::Matched && reply.myIndex == 0, "seat 0 is told about the match");
+
+    auto receiveStart = [](Socket& s) {
+        GameStartPacket packet;
+        Check(recvn(s.value, reinterpret_cast<char*>(&packet), sizeof(packet), 0) == sizeof(packet) &&
+            packet.size == 37 && packet.type == PacketType::GAME_START, "receive GAME_START after JOIN_RESULT");
+        return packet;
+    };
+    const auto firstStart = receiveStart(first);
+    const auto secondStart = receiveStart(second);
+    Check(std::memcmp(&firstStart, &secondStart, sizeof(firstStart)) == 0 &&
+        firstStart.stage == 1 && firstStart.serveSide == 0,
+        "both players receive the same starting stage and serve side");
+    Check(std::memcmp(firstStart.nick[firstReply.myIndex], "red", sizeof("red")) == 0 &&
+        std::memcmp(firstStart.nick[secondReply.myIndex], "피카츄피카", MAX_NICK) == 0,
+        "game start contains both nicknames in seat order, including a full UTF-8 nickname");
+
     join(lone, 13, "green");
     reply = receive(lone);
     Check(reply.result == JoinResult::Waiting && reply.myIndex == 0, "other room number waits alone");
+    fd_set readSet;
+    FD_ZERO(&readSet);
+    FD_SET(lone.value, &readSet);
+    const timeval immediate{};
+    Check(select(0, &readSet, nullptr, nullptr, &immediate) == 0, "a different room does not receive GAME_START");
     running.Finish();
-    std::cout << "PASS: JOIN_RESULT waiting, matched to both players and separate rooms over TCP\n";
+    std::cout << "PASS: JOIN_RESULT and matching GAME_START for two TCP clients in the same room\n";
 }
 
 void RoomRemoveTest()
@@ -2008,11 +2032,12 @@ int main()
     int code = 0;
     try
     {
+        JoinResultTest();
         GameStateSnapshotTest();
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
         ClientFailureTest(); GameClientJoinTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); JoinResultTest(); RoomRemoveTest();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); RoomRemoveTest();
         BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallWallAndHeadTest();
         BallPlayerWorldTest(); StageResetTest(); GameWorldTickTest();
         ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();

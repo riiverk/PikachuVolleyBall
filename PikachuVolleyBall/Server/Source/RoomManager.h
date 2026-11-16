@@ -16,6 +16,7 @@ public:
     RoomManager& operator=(const RoomManager&) = delete;
     Room* JoinRoom(int roomNo, ClientSession* s, int& outIdx, std::uint8_t& outResult);
     void RemoveRoom(int roomNo);
+    void Clear(); // Called after client workers stop.
     std::size_t GetRoomCount() const;
 private:
     int FindRoom(int roomNo) const; // call inside csRooms_

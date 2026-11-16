@@ -204,7 +204,10 @@ void Server::CloseServer()
     clientCount_ = 0;
     LeaveCriticalSection(&stateLock_);
     if (listener != INVALID_SOCKET) closesocket(listener);
-    // ClientSession's destructor closes its socket and waits for its worker.
+    // Cancel socket I/O, then join room workers before freeing their sessions.
+    for (int i = 0; i < count; ++i) clients[i]->Disconnect();
+    for (int i = 0; i < count; ++i) clients[i]->Stop();
+    rooms_.Clear();
     for (int i = 0; i < count; ++i) delete clients[i];
     if (cleanup) WSACleanup();
     EnterCriticalSection(&stateLock_);
