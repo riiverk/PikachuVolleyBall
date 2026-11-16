@@ -8,7 +8,7 @@
 - C++20, Windows SDK, Visual Studio C++ 도구가 필요하다. 팀 기준 v145를 우선 사용하며 설치되어 있지 않으면 기존 설정대로 v143을 사용한다.
 - 저장소 루트에서 PowerShell로 `./Tools/Build.ps1 -Verify`를 실행하면 세 프로젝트를 빌드하고 검증한다. `-Configuration Release`, `-Platform Win32`도 지원한다.
 - 실행 파일은 `PikachuVolleyBall/bin/x64/Debug/Client/Client.exe`에 생성된다. `Resources`도 자동 복사하고 실행 시 실행 파일 위치에서 리소스를 찾으므로 다른 작업 디렉터리에서 시작해도 된다.
-- 현재 Client는 기존 **로컬 2인 게임**으로 실행된다. 1P는 R(점프), D/G(좌우), Z(스파이크/슬라이딩), 2P는 방향키와 Enter를 사용한다.
+- Client를 실행하면 온라인 대전 접속 화면이 열린다. **로컬 2인 대전**을 선택하면 기존 게임으로 들어간다. 1P는 R(점프), D/G(좌우), Z(스파이크/슬라이딩), 2P는 방향키와 Enter를 사용한다.
 - `Server.exe`는 TCP 포트 9000에서 메인 스레드가 접속을 수락하며, 콘솔에서 Enter를 누르면 종료한다. `Server.exe --check`는 임시 포트로 접속·세션 스레드 생성·종료까지 확인한다. 점검 모드에서만 테스트 클라이언트를 보조 스레드로 실행하고, 접속 수락은 동일하게 메인 스레드에서 수행한다. 세션별 패킷 수신은 연결했으며 방 배정과 패킷별 게임 처리는 후속 일정이다.
 - `NetworkClient::Connect`는 IPv4 주소로 TCP 연결을 맺고 CreateThread로 수신 스레드를 시작한다. 현재 접속 화면에는 연결하지 않았으며 패킷별 화면·상태 반영은 후속 일정이다.
 
