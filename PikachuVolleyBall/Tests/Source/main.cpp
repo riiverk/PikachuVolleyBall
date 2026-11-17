@@ -1962,6 +1962,26 @@ void JoinResultTest()
         std::memcmp(firstStart.nick[secondReply.myIndex], "피카츄피카", MAX_NICK) == 0,
         "game start contains both nicknames in seat order, including a full UTF-8 nickname");
 
+    auto receiveState = [](Socket& s) {
+        GameStatePacket packet;
+        Check(recvn(s.value, reinterpret_cast<char*>(&packet), sizeof(packet), 0) == sizeof(packet) &&
+            packet.size == 49 && packet.type == PacketType::GAME_STATE, "receive GAME_STATE after GAME_START");
+        return packet;
+    };
+    float previousBallY = static_cast<float>(GameConst::ServeY);
+    for (std::uint32_t tick = 1; tick <= 4; ++tick)
+    {
+        const auto firstState = receiveState(first);
+        const auto secondState = receiveState(second);
+        Check(firstState.tick == tick && firstState.phase == Phase::Playing &&
+            std::memcmp(&firstState, &secondState, sizeof(firstState)) == 0,
+            "both players receive the same completed ticks in order");
+        Check(firstState.p[0].x == GameConst::PlayerStartX[0] && firstState.p[1].x == GameConst::PlayerStartX[1] &&
+            firstState.ball.x == GameConst::ServeX[0] && firstState.ball.y > previousBallY,
+            "the packet includes both players and the updated ball position");
+        previousBallY = firstState.ball.y;
+    }
+
     join(lone, 13, "green");
     reply = receive(lone);
     Check(reply.result == JoinResult::Waiting && reply.myIndex == 0, "other room number waits alone");
@@ -1969,9 +1989,9 @@ void JoinResultTest()
     FD_ZERO(&readSet);
     FD_SET(lone.value, &readSet);
     const timeval immediate{};
-    Check(select(0, &readSet, nullptr, nullptr, &immediate) == 0, "a different room does not receive GAME_START");
+    Check(select(0, &readSet, nullptr, nullptr, &immediate) == 0, "a different room does not receive match packets");
     running.Finish();
-    std::cout << "PASS: JOIN_RESULT and matching GAME_START for two TCP clients in the same room\n";
+    std::cout << "PASS: JOIN_RESULT, GAME_START and matching GAME_STATE ticks for two TCP clients\n";
 }
 
 void RoomRemoveTest()

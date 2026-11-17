@@ -169,7 +169,14 @@ void Room::BroadcastGameStart(int stage, int serve)
         players_[i]->CopyNickname(packet.nick[i]);
     Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
 }
-void Room::BroadcastState() { /* TODO 11/17 */ }
+
+void Room::BroadcastState()
+{
+    GameStatePacket packet;
+    world_.FillState(packet);
+    Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
+}
+
 void Room::BroadcastEvents() { /* TODO 11/19 */ }
 void Room::BroadcastStageOver() { /* TODO 11/20 */ }
 void Room::BroadcastGameOver(std::uint8_t) { /* TODO 11/21 */ }
