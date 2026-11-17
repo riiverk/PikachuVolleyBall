@@ -7,8 +7,19 @@ RoomManager::RoomManager() { InitializeCriticalSection(&csRooms_); }
 
 RoomManager::~RoomManager()
 {
-    for (int i = 0; i < roomCount_; ++i) delete rooms_[i];
+    Clear();
     DeleteCriticalSection(&csRooms_);
+}
+
+void RoomManager::Clear()
+{
+    while (roomCount_ > 0)
+    {
+        --roomCount_;
+        delete rooms_[roomCount_];
+        rooms_[roomCount_] = nullptr;
+        roomNos_[roomCount_] = 0;
+    }
 }
 
 int RoomManager::FindRoom(int roomNo) const

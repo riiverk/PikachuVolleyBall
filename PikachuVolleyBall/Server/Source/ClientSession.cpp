@@ -227,17 +227,8 @@ void ClientSession::ProcessPacket(char* buf)
         JoinResultPacket reply;
         reply.result = static_cast<JoinResult>(result);
         reply.myIndex = static_cast<std::uint8_t>(seat);
-        SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply));
-        if (reply.result != JoinResult::Matched) break;
-        ClientSession* other = joined->GetPlayer(1 - seat);
-        if (other != nullptr)
-        {
-            JoinResultPacket matched;
-            matched.result = JoinResult::Matched;
-            matched.myIndex = static_cast<std::uint8_t>(1 - seat);
-            other->SendPacket(reinterpret_cast<const char*>(&matched), sizeof(matched));
-        }
-        joined->Start();
+        if (SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply)))
+            joined->ConfirmJoin(seat);
         break;
     }
     case PacketType::INPUT:
@@ -271,6 +262,13 @@ void ClientSession::ProcessPacket(char* buf)
         break;
     }
 }
+void ClientSession::CopyNickname(char (&out)[MAX_NICK]) const
+{
+    EnterCriticalSection(&stateLock_);
+    std::memcpy(out, nickname_, sizeof(out));
+    LeaveCriticalSection(&stateLock_);
+}
+
 bool ClientSession::SendPacket(const char* buf, int len)
 {
     if (buf == nullptr || len < static_cast<int>(sizeof(PacketHeader)) || len > MAX_PACKET_SIZE)

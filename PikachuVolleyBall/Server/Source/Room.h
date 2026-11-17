@@ -13,6 +13,7 @@ public:
     Room& operator=(const Room&) = delete;
     int AddPlayer(ClientSession* s);
     ClientSession* GetPlayer(int idx) const;
+    void ConfirmJoin(int idx);
     void Start();
     static DWORD WINAPI RoomThread(LPVOID arg);
     void SetInput(int idx, std::uint8_t keys);
@@ -32,6 +33,7 @@ public:
 private:
     GameWorld world_;
     ClientSession* players_[2]{};
+    bool joinReplySent_[2]{};
     std::uint8_t inputs_[2]{};
     bool nextStageReady_[2]{};
     CRITICAL_SECTION csInput_;
@@ -39,4 +41,5 @@ private:
     HANDLE thread_ = nullptr;
     std::uint64_t nextTick_ = 0;
     int stage_ = 1;
+    bool left[2]{};
 };
