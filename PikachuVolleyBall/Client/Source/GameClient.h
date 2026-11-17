@@ -12,9 +12,10 @@ public:
     JoinRequestResult ConnectAndJoin(const wchar_t* address, const wchar_t* room, const wchar_t* nickname,
         u_short port = SERVERPORT);
     bool IsConnected() const { return network_.IsConnected(); }
-    void Disconnect() { network_.Disconnect(); }
+    void Disconnect();
     void ChangeScene(Scene scene);
     void OnKey(UINT msg, WPARAM key);
+    void ReleaseInput();
     void OnNetEvent(WPARAM type, LPARAM pkt);
     void OnTimer();
     Scene GetScene() const { return scene_; }

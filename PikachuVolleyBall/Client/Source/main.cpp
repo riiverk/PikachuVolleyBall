@@ -158,7 +158,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 	UpdateWindow(hWnd);
 	int result;
 	while ((result = GetMessage(&Message, 0, 0, 0)) > 0) {
-		if (!localGameStarted && IsDialogMessageW(hWnd, &Message)) continue;
+		if (!localGameStarted)
+		{
+			// Route game keys before dialog navigation consumes arrow keys.
+			if (!joinAttempt.valid() && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
+				gameClient.OnKey(Message.message, Message.wParam);
+			if (IsDialogMessageW(hWnd, &Message)) continue;
+		}
 		TranslateMessage(&Message);
 		DispatchMessage(&Message);
 	}
@@ -204,6 +210,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			if (const HWND ipField = GetDlgItem(hWnd, ConnectScreen::ServerIp); IsWindowEnabled(ipField))
 				SetFocus(ipField);
 			return 0;
+		case WM_ACTIVATEAPP:
+			if (!wParam && !joinAttempt.valid()) gameClient.ReleaseInput();
+			break;
 		case DM_GETDEFID:
 			return IsWindowEnabled(GetDlgItem(hWnd, ConnectScreen::JoinButton))
 				? MAKELRESULT(ConnectScreen::JoinButton, DC_HASDEFID) : 0;

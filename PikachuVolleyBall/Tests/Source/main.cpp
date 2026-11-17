@@ -342,6 +342,48 @@ void GameClientJoinTest()
     std::cout << "PASS: game client validates the connection form and sends JOIN_ROOM\n";
 }
 
+void GameClientInputTest()
+{
+    GameClient client;
+    Listener listener;
+    client.OnKey(WM_KEYDOWN, VK_UP);
+    Check(client.ConnectAndJoin(L"127.0.0.1", L"1", L"input", listener.port) == JoinRequestResult::Sent,
+        "join before exercising game client input");
+    Socket peer;
+    peer.value = listener.Accept();
+    const DWORD timeout = 2000;
+    Check(setsockopt(peer.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0,
+        "set input receive timeout");
+    JoinRoomPacket join;
+    Check(recvn(peer.value, reinterpret_cast<char*>(&join), sizeof(join)) == sizeof(join) &&
+        join.type == PacketType::JOIN_ROOM, "JOIN_ROOM precedes input packets");
+
+    client.OnKey(WM_KEYUP, VK_UP);
+    client.OnKey(WM_CHAR, 'Z');
+    client.OnKey(WM_KEYDOWN, 'A');
+    client.OnKey(WM_KEYDOWN, VK_LEFT);
+    client.OnKey(WM_KEYDOWN, VK_LEFT);
+    client.OnKey(WM_KEYDOWN, 'Z');
+    client.OnKey(WM_KEYUP, VK_LEFT);
+    client.OnKey(WM_KEYUP, VK_LEFT);
+    client.ReleaseInput();
+    client.ReleaseInput();
+    client.OnKey(WM_KEYDOWN, VK_RIGHT);
+    client.OnKey(WM_KEYUP, VK_RIGHT);
+    client.Disconnect();
+
+    for (const std::uint8_t keys : std::array<std::uint8_t, 6>{LEFT, LEFT | ACTION, ACTION, 0, RIGHT, 0})
+    {
+        InputPacket packet;
+        Check(recvn(peer.value, reinterpret_cast<char*>(&packet), sizeof(packet)) == sizeof(packet) &&
+            packet.type == PacketType::INPUT && packet.size == sizeof(packet) && packet.keys == keys,
+            "send only the expected changes, including the release on focus loss");
+    }
+    char tail;
+    Check(recv(peer.value, &tail, 1, 0) == 0, "no extra input packets on repeats or unrelated keys");
+    std::cout << "PASS: game client sends input changes, suppresses repeats and releases held keys\n";
+}
+
 template<class Predicate> void WaitUntil(Predicate predicate, const char* label)
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -2010,7 +2052,8 @@ int main()
     {
         GameStateSnapshotTest();
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
-        ClientFailureTest(); GameClientJoinTest(); PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
+        ClientFailureTest(); GameClientJoinTest(); GameClientInputTest();
+        PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
         SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); JoinResultTest(); RoomRemoveTest();
         BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallWallAndHeadTest();

@@ -33,7 +33,14 @@ JoinRequestResult GameClient::ConnectAndJoin(const wchar_t* address, const wchar
         network_.Disconnect();
         return JoinRequestResult::SendFailed;
     }
+    input_.Reset();
     return JoinRequestResult::Sent;
+}
+
+void GameClient::Disconnect()
+{
+    ReleaseInput();
+    network_.Disconnect();
 }
 
 void GameClient::ChangeScene(Scene scene)
@@ -44,6 +51,25 @@ void GameClient::ChangeScene(Scene scene)
     input_.Reset();
 }
 
-void GameClient::OnKey(UINT, WPARAM) { /* TODO 11/19 */ }
+void GameClient::OnKey(UINT msg, WPARAM key)
+{
+    if (!network_.IsConnected()) return;
+
+    bool changed = false;
+    switch (msg)
+    {
+    case WM_KEYDOWN: changed = input_.OnKeyDown(key); break;
+    case WM_KEYUP: changed = input_.OnKeyUp(key); break;
+    }
+    if (changed) network_.SendInput(input_.GetKeys());
+}
+
+void GameClient::ReleaseInput()
+{
+    if (input_.GetKeys() == 0) return;
+    input_.Reset();
+    if (network_.IsConnected()) network_.SendInput(0);
+}
+
 void GameClient::OnNetEvent(WPARAM, LPARAM) { /* TODO 11/17 */ }
 void GameClient::OnTimer() { /* TODO 11/18 */ }
