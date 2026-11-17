@@ -321,7 +321,6 @@ bool ClientSession::SendPacket(const char* buf, int len)
 }
 void ClientSession::Disconnect()
 {
-    // Lecture ch06 critical section: only the first caller closes the connection.
     EnterCriticalSection(&stateLock_);
     if (disconnected_)
     {
@@ -334,5 +333,14 @@ void ClientSession::Disconnect()
     const int index = playerIndex_;
     LeaveCriticalSection(&stateLock_);
     CloseSocket();
-    if (room != nullptr) room->OnPlayerLeave(index);
+    if (room == nullptr) return;
+    if (rooms_ != nullptr && rooms_->RemoveIfWaiting(room))
+    {
+        EnterCriticalSection(&stateLock_);
+        room_ = nullptr;
+        playerIndex_ = -1;
+        LeaveCriticalSection(&stateLock_);
+        return;
+    }
+    room->OnPlayerLeave(index);
 }

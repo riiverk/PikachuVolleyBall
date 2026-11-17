@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "Common.h"
 
 class Room;
@@ -16,6 +16,7 @@ public:
     RoomManager& operator=(const RoomManager&) = delete;
     Room* JoinRoom(int roomNo, ClientSession* s, int& outIdx, std::uint8_t& outResult);
     void RemoveRoom(int roomNo);
+    bool RemoveIfWaiting(Room* room);
     void Clear(); // Called after client workers stop.
     std::size_t GetRoomCount() const;
 private:
