@@ -7,7 +7,7 @@ class ClientSession;
 class Room
 {
 public:
-    Room();
+    Room(int roomNo = 0);
     ~Room();
     Room(const Room&) = delete;
     Room& operator=(const Room&) = delete;
@@ -42,4 +42,5 @@ private:
     std::uint64_t nextTick_ = 0;
     int stage_ = 1;
     bool left[2]{};
+    int roomNo_ = 0;
 };

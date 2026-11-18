@@ -2,7 +2,7 @@
 
 #include "ClientSession.h"
 
-Room::Room() { InitializeCriticalSection(&csInput_); }
+Room::Room(int roomNo) : roomNo_(roomNo) { InitializeCriticalSection(&csInput_); }
 Room::~Room()
 {
     InterlockedExchange(&quitFlag_, 1);
@@ -53,7 +53,7 @@ void Room::Start()
         return;
     }
   
-    std::printf("[room] thread started\n");
+    std::printf("[room %d] thread started\n", roomNo_);
 }
 void Room::ConfirmJoin(int idx)
 {
@@ -89,6 +89,7 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
         }
         room->stage_ = stage;
         room->world_.Reset(stage, serve);
+		std::printf("[room %d] stage %d start, serve = %d\n", room->roomNo_, stage, serve + 1);
         room->BroadcastGameStart(stage, serve);
         room->nextTick_ = GetTickCount64();
 
@@ -107,10 +108,12 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
         }
 
         const int winner = 1 - room->world_.GetLoser();
+		std::printf("[room %d] stage %d over, winner = %d\n", room->roomNo_, stage, winner + 1);
         room->BroadcastStageOver();
 
         if (stage == GameConst::StageCount)
         {
+			std::printf("[room %d] game over, winner = %d\n", room->roomNo_, winner + 1);
             room->BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Normal));
             break;
         }
@@ -191,7 +194,7 @@ void Room::OnPlayerLeave(int idx)
     LeaveCriticalSection(&csInput_);
 
     InterlockedExchange(&quitFlag_, 1);
-    std::printf("[room] Player %d left\n", idx);
+    std::printf("[room %d] Player %d left\n", roomNo_, idx + 1);
 }
 void Room::EndByQuit() { /* TODO 11/24 */ } // left가 모두 false면 아무것도 하지 않도록 할 것
 void Room::OnChat(int, const char*) { /* TODO 11/24 */ }

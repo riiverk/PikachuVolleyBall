@@ -1,4 +1,4 @@
-#include "Server.h"
+﻿#include "Server.h"
 #include <cstdio>
 #include <cstring>
 
@@ -46,6 +46,8 @@ DWORD WINAPI ConsoleExitThread(LPVOID arg)
 
 int main(int argc, char* argv[])
 {
+    SetConsoleOutputCP(CP_UTF8);
+
     const bool check = argc == 2 && std::strcmp(argv[1], "--check") == 0;
     if (argc > 1 && !check)
     {

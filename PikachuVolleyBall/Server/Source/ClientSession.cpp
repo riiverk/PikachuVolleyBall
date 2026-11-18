@@ -4,6 +4,18 @@
 #include <cstdio>
 #include <cstring>
 
+static const char* StatusToString(JoinResult r)
+{
+    switch (r)
+    {
+    case JoinResult::Waiting: return "Waiting";
+	case JoinResult::Matched: return "Matched";
+	case JoinResult::Full: return "Full";
+	case JoinResult::Rejected: return "Rejected";
+	default: return "Unknown";
+    }
+}
+
 ClientSession::ClientSession(SOCKET socket, RoomManager* rooms) : socket_(socket), rooms_(rooms)
 {
     InitializeCriticalSection(&stateLock_);
@@ -220,6 +232,8 @@ void ClientSession::ProcessPacket(char* buf)
         Room* joined = rooms_->JoinRoom(packet.roomNo, this, seat, result);
         JoinResultPacket reply;
         reply.result = static_cast<JoinResult>(result);
+        std::printf("[join] room=%d, name=%s, result=%s\n",
+            packet.roomNo, packet.nickname, StatusToString(reply.result));
         if (joined == nullptr)
         {
             SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply));

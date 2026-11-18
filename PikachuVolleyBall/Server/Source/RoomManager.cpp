@@ -41,7 +41,7 @@ Room* RoomManager::JoinRoom(int roomNo, ClientSession* s, int& outIdx, std::uint
     int index = FindRoom(roomNo);
     if (index < 0 && roomCount_ < MAX_ROOMS)
     {
-        Room* created = new (std::nothrow) Room;
+        Room* created = new (std::nothrow) Room(roomNo);
         if (created != nullptr)
         {
             index = roomCount_++;
