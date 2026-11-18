@@ -19,6 +19,7 @@ public:
     void CheckScore();
     // Copy the current packet on the same thread that advances this world.
     void FillState(GameStatePacket& out) const;
+    // Drain events in the order they were recorded on the world thread.
     std::vector<GameEvent> PopEvents();
     bool IsStageOver() const;
     int GetLoser() const; // Returns -1 until a player reaches the winning score.

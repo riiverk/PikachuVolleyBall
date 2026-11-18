@@ -139,7 +139,7 @@ inline bool FindPlayerHeadContact(const BallState& ball, const BallState& previo
 
 inline bool ReflectBallAtPlayers(BallState& ball, const BallState& previous,
     const PlayerState (&players)[GameConst::PlayerCount],
-    const PlayerState (&previousPlayers)[GameConst::PlayerCount], float& contactTime)
+    const PlayerState (&previousPlayers)[GameConst::PlayerCount], float& contactTime, std::uint8_t* hitPlayer = nullptr)
 {
     int hitter = -1;
     float earliest = 2;
@@ -171,5 +171,6 @@ inline bool ReflectBallAtPlayers(BallState& ball, const BallState& previous,
         (spike ? GameConst::BallSpikeVelocityY : GameConst::BallHitVelocityY);
     ball.spike = spike ? 1 : 0;
     contactTime = earliest;
+    if (hitPlayer != nullptr) *hitPlayer = static_cast<std::uint8_t>(hitter);
     return true;
 }

@@ -1522,6 +1522,52 @@ void GameWorldTickTest()
     std::cout << "PASS: GameWorld tick order, ready-to-playing transition, paused phases and stage restart\n";
 }
 
+void GameWorldEventsTest()
+{
+    GameWorld world;
+    Check(world.PopEvents().empty(), "new world has no pending events");
+
+    const std::uint8_t keys[2] = {UP | ACTION, LEFT | ACTION};
+    world.Update(keys);
+    world.Update(keys);
+    const auto actions = world.PopEvents();
+    Check(actions.size() == 3 &&
+        actions[0].kind == EventKind::Slide && actions[0].who == 1 &&
+        actions[1].kind == EventKind::Jump && actions[1].who == 0 &&
+        actions[2].kind == EventKind::Spike && actions[2].who == 0,
+        "action starts are drained in tick order without repeats from held keys");
+    Check(world.PopEvents().empty(), "popping twice does not return the same events");
+
+    world.Reset(1, 0);
+    const std::uint8_t idle[2]{};
+    world.Update(idle);
+    GameWorldTestAccess::SetBall(world, {985, 465, 0, 300, 0});
+    world.Update(idle);
+    GameWorldTestAccess::SetBall(world, {650, 634, 0, 300, 0});
+    world.Update(idle);
+    const auto rally = world.PopEvents();
+    Check(rally.size() == 2 &&
+        rally[0].kind == EventKind::Hit && rally[0].who == 1 &&
+        rally[1].kind == EventKind::Score && rally[1].who == 0,
+        "head contact and floor score preserve their player numbers and order across ticks");
+    Check(world.PopEvents().empty(), "events from the last rally have been drained");
+    Check(actions.size() == 3 && actions[2].kind == EventKind::Spike,
+        "later updates and resets do not change an earlier event batch");
+
+    GameWorldTestAccess::SetBall(world, {350, 300, 8000, 9500, 0});
+    PlayerState nearNet;
+    nearNet.x = GameConst::PlayerMaxX[0];
+    nearNet.y = GameConst::PlayerGroundY;
+    GameWorldTestAccess::SetPlayer(world, 0, nearNet);
+    world.Update(idle);
+    Check(world.PopEvents().empty(), "net bounce suppresses the later candidate head contact");
+
+    world.Update(keys);
+    world.Reset(1, 0);
+    Check(world.PopEvents().empty(), "reset discards pending events");
+    std::cout << "PASS: game events for action starts, accepted hits and scores are drained once\n";
+}
+
 void GameWorldScoreTest()
 {
     GameWorld world;
@@ -2142,6 +2188,7 @@ int main()
     try
     {
         GameWorldScoreTest();
+        GameWorldEventsTest();
         GameClientSceneTest(); RendererInitializationTest(); RendererFrameTest();
         ServerConnectTest(); ServerAcceptTest();
     }

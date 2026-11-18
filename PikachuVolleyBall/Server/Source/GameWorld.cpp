@@ -68,7 +68,12 @@ void GameWorld::Update(const std::uint8_t inputs[2])
 void GameWorld::StartSlides()
 {
     for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        const Action before = state_.p[i].action;
         StartPlayerSlide(state_.p[i], playerInputs_[i], slideCount_[i], slideDirection_[i]);
+        if (before != Action::Slide && state_.p[i].action == Action::Slide)
+            events_.push_back({EventKind::Slide, static_cast<std::uint8_t>(i)});
+    }
 }
 
 void GameWorld::SlidePlayers()
@@ -86,7 +91,16 @@ void GameWorld::MovePlayers()
 void GameWorld::JumpPlayers()
 {
     for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        const Action before = state_.p[i].action;
         UpdatePlayerJump(state_.p[i], playerInputs_[i], velocityY_[i]);
+        const Action after = state_.p[i].action;
+        const auto player = static_cast<std::uint8_t>(i);
+        if (playerInputs_[i].jump && (after == Action::Jump || after == Action::Spike))
+            events_.push_back({EventKind::Jump, player});
+        if (before != Action::Spike && after == Action::Spike)
+            events_.push_back({EventKind::Spike, player});
+    }
 }
 
 void GameWorld::ApplyInputs(const std::uint8_t inputs[2])
@@ -120,10 +134,15 @@ void GameWorld::UpdateBall(const PlayerState (&previousPlayers)[2])
     BallState headBall = next;
     float netTime = 0;
     float headTime = 0;
+    std::uint8_t hitter = NO_PLAYER;
     const bool hitNet = ReflectBallAtNet(netBall, previous, &netTime);
-    const bool hitHead = ReflectBallAtPlayers(headBall, previous, state_.p, previousPlayers, headTime);
+    const bool hitHead = ReflectBallAtPlayers(headBall, previous, state_.p, previousPlayers, headTime, &hitter);
     // Evaluate both contacts along the same movement and apply the earlier one.
-    if (hitHead && (!hitNet || headTime < netTime)) next = headBall;
+    if (hitHead && (!hitNet || headTime < netTime))
+    {
+        next = headBall;
+        events_.push_back({EventKind::Hit, hitter});
+    }
     else if (hitNet) next = netBall;
 
     ReflectBallAtWalls(next);
@@ -159,7 +178,12 @@ void GameWorld::FillState(GameStatePacket& out) const
     out = state_;
 }
 
-std::vector<GameEvent> GameWorld::PopEvents() { return {}; /* TODO 11/18 */ }
+std::vector<GameEvent> GameWorld::PopEvents()
+{
+    std::vector<GameEvent> pending;
+    pending.swap(events_);
+    return pending;
+}
 
 bool GameWorld::IsStageOver() const
 {
