@@ -1687,6 +1687,67 @@ bool HasNetEvent(HWND window)
     return PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_NOREMOVE) != FALSE;
 }
 
+void GameClientNetEventTest()
+{
+    struct Player
+    {
+        HWND window = CreateWindowExW(0, L"STATIC", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+        GameClient client;
+
+        Player()
+        {
+            Check(window != nullptr, "create message window for the game client");
+            client.SetWindow(window);
+        }
+        ~Player()
+        {
+            client.Disconnect();
+            MSG message{};
+            while (PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_REMOVE))
+                delete[] reinterpret_cast<char*>(message.lParam);
+            DestroyWindow(window);
+        }
+        NetEventResult Receive(PacketType type)
+        {
+            std::vector<char> packet;
+            Check(TakeNetEvent(window, type, packet), "receive the expected game client window event");
+            return client.OnNetEvent(static_cast<WPARAM>(type), reinterpret_cast<LPARAM>(packet.data()));
+        }
+    } first, second, third;
+
+    Server server;
+    Check(server.InitServer(0), "start server for online scene transitions");
+    AcceptRunner running(server);
+    const auto join = [&](Player& player, const wchar_t* room, const wchar_t* nick)
+    {
+        Check(player.client.ConnectAndJoin(L"127.0.0.1", room, nick, server.GetPort()) == JoinRequestResult::Sent,
+            "send a room join request for the online scene test");
+    };
+
+    join(first, L"17", L"first");
+    Check(first.Receive(PacketType::JOIN_RESULT) == NetEventResult::Waiting && first.client.GetScene() == Scene::Waiting,
+        "first player waits for an opponent");
+    join(second, L"17", L"second");
+    for (Player* player : {&first, &second})
+    {
+        Check(player->Receive(PacketType::JOIN_RESULT) == NetEventResult::Matched && player->client.GetScene() == Scene::Waiting,
+            "matching does not start the game by itself");
+        Check(player->Receive(PacketType::GAME_START) == NetEventResult::GameStarted && player->client.GetScene() == Scene::Playing,
+            "the server's GAME_START starts the game for both players");
+    }
+
+    join(third, L"17", L"third");
+    Check(third.Receive(PacketType::JOIN_RESULT) == NetEventResult::RoomFull && third.client.GetScene() == Scene::Connect,
+        "the third client receives a full-room reply and stays on the connect scene");
+    third.client.Disconnect();
+    join(third, L"18", L"third");
+    Check(third.Receive(PacketType::JOIN_RESULT) == NetEventResult::Waiting && third.client.GetScene() == Scene::Waiting,
+        "a client can retry in another room");
+    first.client.Disconnect();
+    Check(first.client.GetScene() == Scene::Connect, "disconnect returns a player to the connect scene");
+    std::cout << "PASS: online join, match, game start, full room and retry through real server replies\n";
+}
+
 void ClientProcessPacketTest()
 {
     const HWND window = CreateWindowExA(0, "STATIC", nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
@@ -2097,7 +2158,7 @@ int main()
         JoinResultTest();
         GameStateSnapshotTest();
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
-        ClientFailureTest(); GameClientJoinTest(); GameClientInputTest();
+        ClientFailureTest(); GameClientJoinTest(); GameClientInputTest(); GameClientNetEventTest();
         PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
         SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); RoomRemoveTest();

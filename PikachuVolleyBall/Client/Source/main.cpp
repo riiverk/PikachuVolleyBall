@@ -9,6 +9,9 @@
 #include <exception>
 #include <filesystem>
 #include <future>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #pragma comment(lib, "msimg32.lib")
 #pragma comment(lib, "winmm.lib")
@@ -20,6 +23,9 @@ bool localGameStarted = false;
 GameClient gameClient;
 // Destroy the future before gameClient so the worker cannot outlive the network client.
 std::future<JoinRequestResult> joinAttempt;
+// A reply can reach the window before the worker's result is collected.
+struct NetEvent { WPARAM type; std::unique_ptr<char[]> packet; };
+std::vector<NetEvent> pendingNetEvents;
 constexpr UINT_PTR joinTimer = 5;
 
 void SetJoinStatus(HWND window, const wchar_t* text)
@@ -31,6 +37,46 @@ void EnableJoinFields(HWND window, bool enabled)
 {
 	for (const auto control : {ConnectScreen::ServerIp, ConnectScreen::RoomNumber, ConnectScreen::Nickname, ConnectScreen::JoinButton})
 		EnableWindow(GetDlgItem(window, control), enabled);
+}
+
+void StopOnline(HWND window)
+{
+	KillTimer(window, joinTimer);
+	gameClient.Disconnect();
+	pendingNetEvents.clear();
+	// The receive thread has stopped. Discard packets that were already posted.
+	MSG message{};
+	while (PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_REMOVE))
+		if (message.message == WM_NET_EVENT) delete[] reinterpret_cast<char*>(message.lParam);
+}
+
+bool HandleNetEvent(HWND window, const NetEvent& event)
+{
+	const auto result = gameClient.OnNetEvent(event.type, reinterpret_cast<LPARAM>(event.packet.get()));
+	switch (result)
+	{
+	case NetEventResult::Waiting:
+		SetJoinStatus(window, L"방에 입장했습니다. 상대를 기다리는 중…");
+		break;
+	case NetEventResult::Matched:
+		SetJoinStatus(window, L"상대와 매칭되었습니다. 경기 시작을 기다리는 중…");
+		break;
+	case NetEventResult::GameStarted:
+		SetJoinStatus(window, L"경기가 시작되었습니다.");
+		break;
+	case NetEventResult::RoomFull:
+	case NetEventResult::JoinRejected:
+		StopOnline(window);
+		EnableJoinFields(window, true);
+		SetJoinStatus(window, result == NetEventResult::RoomFull
+			? L"방이 가득 찼습니다. 다른 방을 선택하세요."
+			: L"방 입장이 거절되었습니다. 다시 시도하세요.");
+		SetFocus(GetDlgItem(window, ConnectScreen::RoomNumber));
+		return false;
+	case NetEventResult::Ignored:
+		break;
+	}
+	return true;
 }
 
 void StartJoin(HWND window)
@@ -76,7 +122,7 @@ void CheckJoin(HWND window)
 	if (!joinAttempt.valid())
 	{
 		if (gameClient.IsConnected()) return;
-		KillTimer(window, joinTimer);
+		StopOnline(window);
 		EnableJoinFields(window, true);
 		SetJoinStatus(window, L"서버 연결이 끊겼습니다. 다시 접속하세요.");
 		return;
@@ -89,10 +135,13 @@ void CheckJoin(HWND window)
 	{
 		SetJoinStatus(window, L"방 입장 요청을 보냈습니다.");
 		SetFocus(GetDlgItem(window, ConnectScreen::LocalPlayButton));
+		const auto events = std::exchange(pendingNetEvents, {});
+		for (const auto& event : events)
+			if (!HandleNetEvent(window, event)) break;
 		return;
 	}
 
-	KillTimer(window, joinTimer);
+	StopOnline(window);
 	EnableJoinFields(window, true);
 	int focus = ConnectScreen::JoinButton;
 	const wchar_t* status = L"접속 실패. IP와 서버 상태를 확인하세요.";
@@ -163,7 +212,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 			// Route game keys before dialog navigation consumes arrow keys.
 			if (!joinAttempt.valid() && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
 				gameClient.OnKey(Message.message, Message.wParam);
-			if (IsDialogMessageW(hWnd, &Message)) continue;
+			if (Message.message != WM_NET_EVENT && IsDialogMessageW(hWnd, &Message)) continue;
 		}
 		TranslateMessage(&Message);
 		DispatchMessage(&Message);
@@ -173,10 +222,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {
+	if (iMsg == WM_NET_EVENT)
+	{
+		NetEvent event{wParam, std::unique_ptr<char[]>(reinterpret_cast<char*>(lParam))};
+		if (!localGameStarted)
+		{
+			if (joinAttempt.valid()) pendingNetEvents.push_back(std::move(event));
+			else HandleNetEvent(hWnd, event);
+		}
+		return 0;
+	}
+
 	if (iMsg == WM_DESTROY)
 	{
-		KillTimer(hWnd, joinTimer);
-		if (!localGameStarted) connectScreen.Destroy(hWnd);
+		if (!localGameStarted)
+		{
+			gameClient.SetWindow(nullptr);
+			if (joinAttempt.valid()) joinAttempt.wait();
+			StopOnline(hWnd);
+			connectScreen.Destroy(hWnd);
+		}
 		KillTimer(hWnd, 2);
 		KillTimer(hWnd, GameConst::FrameTimerId);
 		KillTimer(hWnd, BallRotate);
@@ -189,7 +254,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		switch (iMsg)
 		{
 		case WM_CREATE:
-			return connectScreen.Create(hWnd, g_hInst) ? 0 : -1;
+			if (!connectScreen.Create(hWnd, g_hInst)) return -1;
+			gameClient.SetWindow(hWnd);
+			return 0;
 		case WM_GETMINMAXINFO:
 			connectScreen.LimitWindowSize(hWnd, *reinterpret_cast<MINMAXINFO*>(lParam));
 			return 0;
@@ -226,8 +293,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 				StartJoin(hWnd);
 			if (LOWORD(wParam) == ConnectScreen::LocalPlayButton && !joinAttempt.valid())
 			{
-				KillTimer(hWnd, joinTimer);
-				gameClient.Disconnect();
+				gameClient.SetWindow(nullptr);
+				StopOnline(hWnd);
 				localGameStarted = true;
 				connectScreen.Destroy(hWnd);
 				SetFocus(hWnd);

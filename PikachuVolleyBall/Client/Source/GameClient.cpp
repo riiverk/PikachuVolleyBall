@@ -1,4 +1,5 @@
 #include "GameClient.h"
+#include <cstring>
 #include <limits>
 
 JoinRequestResult GameClient::ConnectAndJoin(const wchar_t* address, const wchar_t* room,
@@ -41,14 +42,15 @@ void GameClient::Disconnect()
 {
     ReleaseInput();
     network_.Disconnect();
+    ChangeScene(Scene::Connect);
 }
 
 void GameClient::ChangeScene(Scene scene)
 {
     if (scene_ == scene) return;
 
+    ReleaseInput();
     scene_ = scene;
-    input_.Reset();
 }
 
 void GameClient::OnKey(UINT msg, WPARAM key)
@@ -71,5 +73,45 @@ void GameClient::ReleaseInput()
     if (network_.IsConnected()) network_.SendInput(0);
 }
 
-void GameClient::OnNetEvent(WPARAM, LPARAM) { /* TODO 11/17 */ }
+NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
+{
+    if (!pkt) return NetEventResult::Ignored;
+
+    const auto data = reinterpret_cast<const char*>(pkt);
+    switch (type)
+    {
+    case static_cast<WPARAM>(PacketType::JOIN_RESULT):
+    {
+        if (scene_ != Scene::Connect && scene_ != Scene::Waiting) break;
+
+        JoinResultPacket reply;
+        std::memcpy(&reply, data, sizeof(reply));
+        switch (reply.result)
+        {
+        case JoinResult::Waiting:
+        case JoinResult::Matched:
+            if (reply.myIndex >= GameConst::PlayerCount) break;
+            ChangeScene(Scene::Waiting);
+            return reply.result == JoinResult::Waiting ? NetEventResult::Waiting : NetEventResult::Matched;
+        case JoinResult::Full:
+            return NetEventResult::RoomFull;
+        case JoinResult::Rejected:
+            return NetEventResult::JoinRejected;
+        }
+        break;
+    }
+    case static_cast<WPARAM>(PacketType::GAME_START):
+    {
+        if (scene_ != Scene::Waiting && scene_ != Scene::StageOver) break;
+
+        GameStartPacket start;
+        std::memcpy(&start, data, sizeof(start));
+        if (start.stage == 0 || start.stage > GameConst::StageCount || start.serveSide >= GameConst::PlayerCount)
+            break;
+        ChangeScene(Scene::Playing);
+        return NetEventResult::GameStarted;
+    }
+    }
+    return NetEventResult::Ignored;
+}
 void GameClient::OnTimer() { /* TODO 11/18 */ }

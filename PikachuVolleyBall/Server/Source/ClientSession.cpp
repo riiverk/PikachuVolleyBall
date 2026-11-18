@@ -218,14 +218,18 @@ void ClientSession::ProcessPacket(char* buf)
         int seat = -1;
         std::uint8_t result = 0;
         Room* joined = rooms_->JoinRoom(packet.roomNo, this, seat, result);
-        if (joined == nullptr) break;
+        JoinResultPacket reply;
+        reply.result = static_cast<JoinResult>(result);
+        if (joined == nullptr)
+        {
+            SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply));
+            break;
+        }
         EnterCriticalSection(&stateLock_);
         room_ = joined;
         playerIndex_ = seat;
         std::memcpy(nickname_, packet.nickname, MAX_NICK);
         LeaveCriticalSection(&stateLock_);
-        JoinResultPacket reply;
-        reply.result = static_cast<JoinResult>(result);
         reply.myIndex = static_cast<std::uint8_t>(seat);
         if (SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply)))
             joined->ConfirmJoin(seat);

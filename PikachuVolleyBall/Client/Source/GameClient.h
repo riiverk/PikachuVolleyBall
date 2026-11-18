@@ -5,18 +5,21 @@
 
 enum class Scene { Connect, Waiting, Playing, StageOver, Result };
 enum class JoinRequestResult { Sent, InvalidAddress, InvalidRoom, InvalidNickname, ConnectionFailed, SendFailed };
+enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, GameStarted };
 
 class GameClient
 {
 public:
     JoinRequestResult ConnectAndJoin(const wchar_t* address, const wchar_t* room, const wchar_t* nickname,
         u_short port = SERVERPORT);
+    void SetWindow(HWND window) { network_.SetWindow(window); }
     bool IsConnected() const { return network_.IsConnected(); }
     void Disconnect();
     void ChangeScene(Scene scene);
     void OnKey(UINT msg, WPARAM key);
     void ReleaseInput();
-    void OnNetEvent(WPARAM type, LPARAM pkt);
+    // The UI owns the packet and keeps it alive for the duration of this call.
+    NetEventResult OnNetEvent(WPARAM type, LPARAM pkt);
     void OnTimer();
     Scene GetScene() const { return scene_; }
 private:
