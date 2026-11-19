@@ -16,6 +16,15 @@ static const char* StatusToString(JoinResult r)
     }
 }
 
+static bool IsValidJoin(const JoinRoomPacket& packet)
+{
+    if (packet.roomNo <= 0) return false;
+
+    int length = 0;
+    while (length < MAX_NICK && packet.nickname[length] != '\0') ++length;
+    return length > 0 && length < MAX_NICK;
+}
+
 ClientSession::ClientSession(SOCKET socket, RoomManager* rooms) : socket_(socket), rooms_(rooms)
 {
     InitializeCriticalSection(&stateLock_);
@@ -226,7 +235,16 @@ void ClientSession::ProcessPacket(char* buf)
         if (room != nullptr || rooms_ == nullptr) break;
         JoinRoomPacket packet;
         std::memcpy(&packet, buf, sizeof(packet));
-        packet.nickname[MAX_NICK - 1] = '\0';
+        if (!IsValidJoin(packet))
+        {
+            JoinResultPacket reply;
+            reply.result = JoinResult::Rejected;
+            packet.nickname[MAX_NICK - 1] = '\0';
+            std::printf("[join] room=%d, name=%s, result=%s (invalid)\n",
+                packet.roomNo, packet.nickname, StatusToString(reply.result));
+            SendPacket((const char*)&reply, sizeof(reply));
+            break;
+        }
         int seat = -1;
         std::uint8_t result = 0;
         Room* joined = rooms_->JoinRoom(packet.roomNo, this, seat, result);
