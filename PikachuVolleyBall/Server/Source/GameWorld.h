@@ -4,7 +4,12 @@
 #include <array>
 #include <vector>
 
-struct GameEvent { EventKind kind; std::uint8_t who; };
+struct GameEvent
+{
+    EventKind kind;
+    std::uint8_t who;
+    std::uint8_t score[2]{}; // Score immediately after this event.
+};
 
 class GameWorld
 {

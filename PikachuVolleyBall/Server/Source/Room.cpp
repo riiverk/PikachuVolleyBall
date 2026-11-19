@@ -180,7 +180,25 @@ void Room::BroadcastState()
     Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
 }
 
-void Room::BroadcastEvents() { /* TODO 11/19 */ }
+void Room::BroadcastEvents()
+{
+    for (const GameEvent& event : world_.PopEvents())
+    {
+        EventPacket packet;
+        packet.kind = event.kind;
+        packet.who = event.who;
+        Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
+
+        if (event.kind == EventKind::Score)
+        {
+            ScorePacket score;
+            score.scorer = event.who;
+            score.score[0] = event.score[0];
+            score.score[1] = event.score[1];
+            Broadcast(reinterpret_cast<const char*>(&score), sizeof(score));
+        }
+    }
+}
 void Room::BroadcastStageOver() { /* TODO 11/20 */ }
 void Room::BroadcastGameOver(std::uint8_t) { /* TODO 11/21 */ }
 void Room::OnNextStage(int) { /* TODO 11/23 */ }
