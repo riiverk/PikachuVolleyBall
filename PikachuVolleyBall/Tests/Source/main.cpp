@@ -56,6 +56,11 @@ struct RendererTestAccess
     }
 };
 
+struct RoomTestAccess
+{
+    static GameWorld& World(Room& room) { return room.world_; }
+};
+
 namespace
 {
 void Check(bool ok, const char* label)
@@ -1868,6 +1873,81 @@ void ClientProcessPacketTest()
     std::cout << "PASS: client ProcessPacket stores GAME_STATE and posts other server packets to the window\n";
 }
 
+void RoomEventsBroadcastTest()
+{
+    Stream first, second, outside;
+    ClientSession player0(std::exchange(first.receiver.value, INVALID_SOCKET));
+    ClientSession player1(std::exchange(second.receiver.value, INVALID_SOCKET));
+    ClientSession otherPlayer(std::exchange(outside.receiver.value, INVALID_SOCKET));
+    Room room(1), otherRoom(2);
+    Check(room.AddPlayer(&player0) == 0 && room.AddPlayer(&player1) == 1 &&
+        otherRoom.AddPlayer(&otherPlayer) == 0, "event recipients belong to their own rooms");
+    const DWORD timeout = 2000;
+    for (Stream* stream : {&first, &second})
+        Check(setsockopt(stream->sender.value, SOL_SOCKET, SO_RCVTIMEO,
+            reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0, "event receive timeout");
+
+    auto receiveBoth = [&]<typename Packet>(const Packet& expected) {
+        for (Stream* stream : {&first, &second})
+        {
+            Packet received;
+            Check(recvn(stream->sender.value, reinterpret_cast<char*>(&received), sizeof(received), 0) == sizeof(received) &&
+                std::memcmp(&received, &expected, sizeof(received)) == 0,
+                "both clients receive the expected whole event/score packet in order");
+        }
+    };
+    auto expectEvent = [&](EventKind kind, std::uint8_t who) {
+        EventPacket packet;
+        packet.kind = kind;
+        packet.who = who;
+        receiveBoth(packet);
+    };
+
+    GameWorld& world = RoomTestAccess::World(room);
+    const std::uint8_t active[2] = {UP | ACTION, LEFT | ACTION};
+    world.Update(active);
+    world.Update(active);
+    room.BroadcastEvents();
+    expectEvent(EventKind::Slide, 1);
+    expectEvent(EventKind::Jump, 0);
+    expectEvent(EventKind::Spike, 0);
+
+    world.Reset(1, 0);
+    const std::uint8_t idle[2]{};
+    world.Update(idle);
+    GameWorldTestAccess::SetBall(world, {985, 469, 0, 400, 0});
+    world.Update(idle);
+    GameWorldTestAccess::SetBall(world, {450, 635, 0, 400, 1});
+    world.CheckScore();
+    GameWorldTestAccess::SetBall(world, {600, 635, 0, 400, 0});
+    world.CheckScore();
+    room.BroadcastEvents();
+    expectEvent(EventKind::Hit, 1);
+    expectEvent(EventKind::Score, 1);
+    ScorePacket firstScore;
+    firstScore.scorer = 1;
+    firstScore.score[1] = 1;
+    receiveBoth(firstScore);
+    expectEvent(EventKind::Score, 0);
+    ScorePacket secondScore;
+    secondScore.scorer = 0;
+    secondScore.score[0] = secondScore.score[1] = 1;
+    receiveBoth(secondScore);
+
+    room.BroadcastEvents();
+    otherRoom.BroadcastEvents();
+    for (Stream* stream : {&first, &second, &outside})
+    {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(stream->sender.value, &readSet);
+        const timeval immediate{};
+        Check(select(0, &readSet, nullptr, nullptr, &immediate) == 0,
+            "events are drained once and do not reach a different room");
+    }
+    std::cout << "PASS: room EVENT/SCORE packets, per-score totals, ordering and no duplicate/other-room delivery\n";
+}
+
 void GameStateSnapshotTest()
 {
     Listener listener;
@@ -2202,6 +2282,7 @@ int main()
     int code = 0;
     try
     {
+        RoomEventsBroadcastTest();
         JoinResultTest();
         GameStateSnapshotTest();
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();

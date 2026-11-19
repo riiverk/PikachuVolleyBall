@@ -31,6 +31,7 @@ public:
     void EndByQuit();
     void OnChat(int idx, const char* msg);
 private:
+    friend struct RoomTestAccess;
     GameWorld world_;
     ClientSession* players_[2]{};
     bool joinReplySent_[2]{};

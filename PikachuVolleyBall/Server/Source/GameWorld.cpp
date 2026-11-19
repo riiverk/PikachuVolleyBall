@@ -157,7 +157,9 @@ void GameWorld::CheckScore()
     constexpr float netCenterX = (GameConst::NetLeft + GameConst::NetRight) / 2.0f;
     const float ballCenterX = state_.ball.x + GameConst::BallCenterX;
     const std::uint8_t scorer = ballCenterX < netCenterX ? 1 : 0;
-    events_.push_back({EventKind::Score, scorer});
+    GameEvent event{EventKind::Score, scorer, {scores_[0], scores_[1]}};
+    ++event.score[scorer];
+    events_.push_back(event);
     ++scores_[scorer];
 
     if (scores_[scorer] < GameConst::WinningScore)
