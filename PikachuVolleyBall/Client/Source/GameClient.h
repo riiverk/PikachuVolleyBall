@@ -10,6 +10,7 @@ enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, G
 class GameClient
 {
 public:
+    ~GameClient();
     JoinRequestResult ConnectAndJoin(const wchar_t* address, const wchar_t* room, const wchar_t* nickname,
         u_short port = SERVERPORT);
     void SetWindow(HWND window) { network_.SetWindow(window); }
@@ -20,11 +21,15 @@ public:
     void ReleaseInput();
     // The UI owns the packet and keeps it alive for the duration of this call.
     NetEventResult OnNetEvent(WPARAM type, LPARAM pkt);
-    void OnTimer();
+    bool StartRendering(HWND window);
+    void StopRendering();
+    bool OnTimer();
     Scene GetScene() const { return scene_; }
 private:
+    friend struct GameClientTestAccess;
     Scene scene_ = Scene::Connect;
     NetworkClient network_;
     InputManager input_;
     Renderer renderer_;
+    HWND renderWindow_ = nullptr;
 };

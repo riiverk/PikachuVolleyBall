@@ -66,6 +66,7 @@ bool NetworkClient::Connect(const char* ip, u_short port)
     socket_ = socket;
     stopping_ = false;
     latestState_ = GameStatePacket{};
+    hasLatestState_ = false;
     receivedCount_ = 0;
     lastError_ = 0;
     LeaveCriticalSection(&stateLock_);
@@ -197,6 +198,7 @@ void NetworkClient::ProcessPacket(char* buf)
         // The latest state is polled by the timer, so it is stored instead of posted.
         EnterCriticalSection(&stateLock_);
         std::memcpy(&latestState_, buf, sizeof(latestState_));
+        hasLatestState_ = true;
         LeaveCriticalSection(&stateLock_);
         return;
     case PacketType::JOIN_RESULT:
@@ -239,11 +241,13 @@ void NetworkClient::SendInput(std::uint8_t keys)
 }
 void NetworkClient::SendChat(const char*) { /* TODO 11/23 */ }
 void NetworkClient::SendNextStage() { /* TODO 11/26 */ }
-void NetworkClient::GetLatestState(GameStatePacket& out)
+bool NetworkClient::GetLatestState(GameStatePacket& out)
 {
     EnterCriticalSection(&stateLock_);
     out = latestState_;
+    const bool available = hasLatestState_;
     LeaveCriticalSection(&stateLock_);
+    return available;
 }
 void NetworkClient::Disconnect()
 {

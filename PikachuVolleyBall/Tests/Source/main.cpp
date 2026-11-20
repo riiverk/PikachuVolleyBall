@@ -56,6 +56,14 @@ struct RendererTestAccess
     }
 };
 
+struct GameClientTestAccess
+{
+    static COLORREF Pixel(const GameClient& client, int x, int y)
+    {
+        return RendererTestAccess::Pixel(client.renderer_, x, y);
+    }
+};
+
 struct RoomTestAccess
 {
     static GameWorld& World(Room& room) { return room.world_; }
@@ -1738,6 +1746,91 @@ bool HasNetEvent(HWND window)
     return PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_NOREMOVE) != FALSE;
 }
 
+void GameClientTimerTest()
+{
+    struct Window
+    {
+        HWND handle = CreateWindowExW(0, L"STATIC", nullptr, WS_POPUP,
+            0, 0, 580, 415, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        ~Window() { DestroyWindow(handle); }
+    } window;
+    Check(window.handle != nullptr, "create a game client rendering window");
+    Listener listener;
+    GameClient client;
+    client.SetWindow(window.handle);
+    Check(!client.OnTimer() && !client.StartRendering(window.handle), "the connect scene does not render gameplay");
+    Check(client.ConnectAndJoin(L"127.0.0.1", L"18", L"timer", listener.port) == JoinRequestResult::Sent,
+        "connect game client for timer rendering");
+    Socket peer; peer.value = listener.Accept();
+
+    const auto receive = [&](PacketType type)
+    {
+        std::vector<char> packet;
+        Check(TakeNetEvent(window.handle, type, packet), "receive rendering scene event");
+        return client.OnNetEvent(static_cast<WPARAM>(type), reinterpret_cast<LPARAM>(packet.data()));
+    };
+    JoinResultPacket reply; reply.result = JoinResult::Matched; reply.myIndex = 0;
+    GameStartPacket start;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&reply), sizeof(reply));
+    SendBytes(peer.value, reinterpret_cast<const char*>(&start), sizeof(start));
+    Check(receive(PacketType::JOIN_RESULT) == NetEventResult::Matched &&
+        receive(PacketType::GAME_START) == NetEventResult::GameStarted, "start the rendering scene from server replies");
+    Check(!client.StartRendering(nullptr) && client.StartRendering(window.handle), "initialize renderer and frame timer");
+    Check(!client.OnTimer(), "do not render default coordinates before the first GAME_STATE");
+
+    const auto frame = [&]
+    {
+        bool painted = false;
+        WaitUntil([&]
+        {
+            MSG message{};
+            if (PeekMessage(&message, window.handle, WM_TIMER, WM_TIMER, PM_REMOVE) &&
+                message.wParam == GameConst::FrameTimerId)
+                painted = client.OnTimer();
+            return painted;
+        }, "the Win32 frame timer delivers a renderable frame");
+    };
+    GameStatePacket state;
+    state.phase = Phase::Playing;
+    state.p[0].x = 100; state.p[0].y = 520;
+    state.p[1].x = 900; state.p[1].y = 520;
+    state.ball.x = 380; state.ball.y = 280;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&state), sizeof(state));
+    frame();
+    const auto pixel = [&](int x, int y) { return GameClientTestAccess::Pixel(client, x, y); };
+    const COLORREF ball = RGB(255, 247, 247);
+    Check(pixel(430, 330) == ball && pixel(159, 627) == RGB(159, 0, 0),
+        "the timer renders the first received state, including valid tick zero");
+    const COLORREF player = pixel(185, 605);
+
+    state.tick = 1; state.ball.x = 450; state.p[0].x = 250;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&state), sizeof(state));
+    WaitUntil([&]
+    {
+        frame();
+        return pixel(500, 330) == ball;
+    }, "a later server snapshot reaches the timer renderer");
+    Check(pixel(430, 330) != ball && pixel(185, 605) != player && pixel(309, 627) == RGB(159, 0, 0),
+        "redraw the latest player and ball positions without stale sprites");
+    Check(!HasNetEvent(window.handle), "GAME_STATE does not flood the UI with posted events");
+
+    client.Disconnect();
+    Check(!client.OnTimer() && client.GetScene() == Scene::Connect, "disconnect stops online rendering");
+    MSG message{};
+    while (PeekMessage(&message, window.handle, WM_TIMER, WM_TIMER, PM_REMOVE)) {}
+    std::this_thread::sleep_for(std::chrono::milliseconds(GameConst::TickMs * 3));
+    Check(!PeekMessage(&message, window.handle, WM_TIMER, WM_TIMER, PM_REMOVE), "disconnect cancels the frame timer");
+
+    Check(client.ConnectAndJoin(L"127.0.0.1", L"18", L"retry", listener.port) == JoinRequestResult::Sent,
+        "reconnect the same rendering client");
+    Socket retry; retry.value = listener.Accept();
+    client.ChangeScene(Scene::Playing);
+    Check(client.StartRendering(window.handle) && !client.OnTimer(), "reconnect does not render the previous connection's state");
+    client.ChangeScene(Scene::Waiting);
+    Check(!client.OnTimer(), "leaving the playing scene stops rendering");
+    std::cout << "PASS: frame timer renders latest TCP state, clears old positions, stops and resets on reconnect\n";
+}
+
 void GameClientNetEventTest()
 {
     struct Player
@@ -1809,8 +1902,8 @@ void ClientProcessPacketTest()
     GameStatePacket state; state.tick = 77; state.phase = Phase::Playing; state.p[1].x = 940; state.ball.x = 120.5f;
     client.ProcessPacket(reinterpret_cast<char*>(&state));
     GameStatePacket latest;
-    client.GetLatestState(latest);
-    Check(std::memcmp(&latest, &state, sizeof(state)) == 0, "GAME_STATE stores the latest state");
+    Check(client.GetLatestState(latest) && std::memcmp(&latest, &state, sizeof(state)) == 0,
+        "GAME_STATE stores the latest state");
 
     ScorePacket score; score.scorer = 1; score.score[1] = 4;
     client.ProcessPacket(reinterpret_cast<char*>(&score));
@@ -1841,8 +1934,7 @@ void ClientProcessPacketTest()
     Listener listener;
     Check(client.Connect("127.0.0.1", listener.port), "connect dispatching client");
     Socket server; server.value = listener.Accept();
-    client.GetLatestState(latest);
-    Check(latest.tick == 0, "connect clears the previous state");
+    Check(!client.GetLatestState(latest) && latest.tick == 0, "connect clears the previous state and marks it unavailable");
     JoinResultPacket result; result.result = JoinResult::Matched; result.myIndex = 1;
     GameStartPacket start; start.stage = 2; start.serveSide = 1; std::memcpy(start.nick[0], "pika", 5);
     EventPacket event; event.kind = EventKind::Spike; event.who = 0;
@@ -2286,7 +2378,7 @@ int main()
         JoinResultTest();
         GameStateSnapshotTest();
         ProtocolTest(); FragmentedTest(); CoalescedTest(); ShortAndInvalidTest();
-        ClientFailureTest(); GameClientJoinTest(); GameClientInputTest(); GameClientNetEventTest();
+        ClientFailureTest(); GameClientJoinTest(); GameClientInputTest(); GameClientTimerTest(); GameClientNetEventTest();
         PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
         SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); RoomRemoveTest();

@@ -19,7 +19,8 @@ public:
     void SendInput(std::uint8_t keys);
     void SendChat(const char* msg);
     void SendNextStage();
-    void GetLatestState(GameStatePacket& out);
+    // False until this connection has received its first GAME_STATE.
+    bool GetLatestState(GameStatePacket& out);
     void Disconnect();
     bool IsConnected() const;
     int GetLastError() const;
@@ -40,6 +41,7 @@ private:
     int lastError_ = 0;
     HWND window_ = nullptr;
     GameStatePacket latestState_{};
+    bool hasLatestState_ = false;
     mutable CRITICAL_SECTION stateLock_;
     CRITICAL_SECTION sendLock_;
     bool stopping_ = true;

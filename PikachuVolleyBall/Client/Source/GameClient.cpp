@@ -2,6 +2,11 @@
 #include <cstring>
 #include <limits>
 
+GameClient::~GameClient()
+{
+    StopRendering();
+}
+
 JoinRequestResult GameClient::ConnectAndJoin(const wchar_t* address, const wchar_t* room,
     const wchar_t* nickname, u_short port)
 {
@@ -40,6 +45,7 @@ JoinRequestResult GameClient::ConnectAndJoin(const wchar_t* address, const wchar
 
 void GameClient::Disconnect()
 {
+    StopRendering();
     ReleaseInput();
     network_.Disconnect();
     ChangeScene(Scene::Connect);
@@ -49,6 +55,7 @@ void GameClient::ChangeScene(Scene scene)
 {
     if (scene_ == scene) return;
 
+    if (scene != Scene::Playing) StopRendering();
     ReleaseInput();
     scene_ = scene;
 }
@@ -114,4 +121,32 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
     }
     return NetEventResult::Ignored;
 }
-void GameClient::OnTimer() { /* TODO 11/18 */ }
+bool GameClient::StartRendering(HWND window)
+{
+    if (scene_ != Scene::Playing || !network_.IsConnected() || !IsWindow(window)) return false;
+    StopRendering();
+    if (!renderer_.Initialize(window)) return false;
+    if (!SetTimer(window, GameConst::FrameTimerId, GameConst::TickMs, nullptr))
+    {
+        renderer_.Shutdown();
+        return false;
+    }
+    renderWindow_ = window;
+    return true;
+}
+
+void GameClient::StopRendering()
+{
+    if (renderWindow_) KillTimer(renderWindow_, GameConst::FrameTimerId);
+    renderWindow_ = nullptr;
+    renderer_.Shutdown();
+}
+
+bool GameClient::OnTimer()
+{
+    if (!renderWindow_ || scene_ != Scene::Playing || !network_.IsConnected()) return false;
+    GameStatePacket state;
+    if (!network_.GetLatestState(state)) return false;
+    renderer_.Render(state);
+    return true;
+}

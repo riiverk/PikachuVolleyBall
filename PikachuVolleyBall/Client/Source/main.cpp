@@ -39,10 +39,18 @@ void EnableJoinFields(HWND window, bool enabled)
 		EnableWindow(GetDlgItem(window, control), enabled);
 }
 
+void ShowConnectFields(HWND window, bool visible)
+{
+	for (int control = ConnectScreen::IpLabel; control <= ConnectScreen::Status; ++control)
+		ShowWindow(GetDlgItem(window, control), visible ? SW_SHOW : SW_HIDE);
+}
+
 void StopOnline(HWND window)
 {
 	KillTimer(window, joinTimer);
 	gameClient.Disconnect();
+	ShowConnectFields(window, true);
+	InvalidateRect(window, nullptr, FALSE);
 	pendingNetEvents.clear();
 	// The receive thread has stopped. Discard packets that were already posted.
 	MSG message{};
@@ -62,7 +70,16 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 		SetJoinStatus(window, L"상대와 매칭되었습니다. 경기 시작을 기다리는 중…");
 		break;
 	case NetEventResult::GameStarted:
-		SetJoinStatus(window, L"경기가 시작되었습니다.");
+		if (!gameClient.StartRendering(window))
+		{
+			StopOnline(window);
+			EnableJoinFields(window, true);
+			SetJoinStatus(window, L"경기 화면을 시작하지 못했습니다. 다시 접속하세요.");
+			return false;
+		}
+		ShowConnectFields(window, false);
+		SetFocus(window);
+		InvalidateRect(window, nullptr, FALSE);
 		break;
 	case NetEventResult::RoomFull:
 	case NetEventResult::JoinRejected:
@@ -212,7 +229,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 			// Route game keys before dialog navigation consumes arrow keys.
 			if (!joinAttempt.valid() && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
 				gameClient.OnKey(Message.message, Message.wParam);
-			if (Message.message != WM_NET_EVENT && IsDialogMessageW(hWnd, &Message)) continue;
+			if (gameClient.GetScene() != Scene::Playing && Message.message != WM_NET_EVENT &&
+				IsDialogMessageW(hWnd, &Message)) continue;
 		}
 		TranslateMessage(&Message);
 		DispatchMessage(&Message);
@@ -266,7 +284,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		case WM_ERASEBKGND:
 			return TRUE;
 		case WM_PAINT:
-			connectScreen.Paint(hWnd);
+			if (gameClient.GetScene() == Scene::Playing)
+			{
+				PAINTSTRUCT paint{};
+				BeginPaint(hWnd, &paint);
+				EndPaint(hWnd, &paint);
+				gameClient.OnTimer();
+			}
+			else connectScreen.Paint(hWnd);
 			return 0;
 		case WM_CTLCOLORSTATIC:
 			return reinterpret_cast<LRESULT>(connectScreen.PaintLabel(reinterpret_cast<HDC>(wParam)));
@@ -284,6 +309,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			return IsWindowEnabled(GetDlgItem(hWnd, ConnectScreen::JoinButton))
 				? MAKELRESULT(ConnectScreen::JoinButton, DC_HASDEFID) : 0;
 		case WM_TIMER:
+			if (wParam == GameConst::FrameTimerId && !joinAttempt.valid()) gameClient.OnTimer();
 			if (wParam == joinTimer && !IsWindowEnabled(GetDlgItem(hWnd, ConnectScreen::JoinButton)))
 				CheckJoin(hWnd);
 			return 0;
