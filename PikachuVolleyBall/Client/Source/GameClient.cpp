@@ -62,7 +62,8 @@ void GameClient::ChangeScene(Scene scene)
 
 void GameClient::OnKey(UINT msg, WPARAM key)
 {
-    if (!network_.IsConnected()) return;
+    // Form navigation and future chat/stage controls must not become INPUT packets.
+    if (scene_ != Scene::Playing || !network_.IsConnected()) return;
 
     bool changed = false;
     switch (msg)

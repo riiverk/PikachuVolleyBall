@@ -371,9 +371,22 @@ void GameClientInputTest()
     Check(recvn(peer.value, reinterpret_cast<char*>(&join), sizeof(join)) == sizeof(join) &&
         join.type == PacketType::JOIN_ROOM, "JOIN_ROOM precedes input packets");
 
+    for (const Scene scene : {Scene::Connect, Scene::Waiting, Scene::StageOver, Scene::Result})
+    {
+        client.ChangeScene(scene);
+        for (const WPARAM key : std::array<WPARAM, 8>{VK_LEFT, VK_RIGHT, VK_UP, 'Z', VK_RETURN, VK_SPACE, VK_TAB, VK_ESCAPE})
+        {
+            client.OnKey(WM_KEYDOWN, key);
+            client.OnKey(WM_KEYUP, key);
+        }
+    }
+    client.ChangeScene(Scene::Playing);
     client.OnKey(WM_KEYUP, VK_UP);
     client.OnKey(WM_CHAR, 'Z');
     client.OnKey(WM_KEYDOWN, 'A');
+    client.OnKey(WM_KEYDOWN, VK_RETURN);
+    client.OnKey(WM_KEYUP, VK_RETURN);
+    client.OnKey(WM_KEYDOWN, VK_TAB);
     client.OnKey(WM_KEYDOWN, VK_LEFT);
     client.OnKey(WM_KEYDOWN, VK_LEFT);
     client.OnKey(WM_KEYDOWN, 'Z');
@@ -383,18 +396,33 @@ void GameClientInputTest()
     client.ReleaseInput();
     client.OnKey(WM_KEYDOWN, VK_RIGHT);
     client.OnKey(WM_KEYUP, VK_RIGHT);
-    client.Disconnect();
 
-    for (const std::uint8_t keys : std::array<std::uint8_t, 6>{LEFT, LEFT | ACTION, ACTION, 0, RIGHT, 0})
+    std::vector<std::uint8_t> expected{LEFT, LEFT | ACTION, ACTION, 0, RIGHT, 0};
+    for (const Scene scene : {Scene::Connect, Scene::Waiting, Scene::StageOver, Scene::Result})
+    {
+        client.OnKey(WM_KEYDOWN, VK_RIGHT);
+        client.ChangeScene(scene);
+        client.OnKey(WM_KEYUP, VK_RIGHT);
+        client.OnKey(WM_KEYDOWN, 'Z');
+        client.OnKey(WM_KEYUP, 'Z');
+        client.ChangeScene(Scene::Playing);
+        client.OnKey(WM_KEYUP, VK_RIGHT);
+        expected.insert(expected.end(), {RIGHT, 0});
+    }
+    client.OnKey(WM_KEYDOWN, VK_UP);
+    client.Disconnect();
+    expected.insert(expected.end(), {UP, 0});
+
+    for (const std::uint8_t keys : expected)
     {
         InputPacket packet;
         Check(recvn(peer.value, reinterpret_cast<char*>(&packet), sizeof(packet)) == sizeof(packet) &&
             packet.type == PacketType::INPUT && packet.size == sizeof(packet) && packet.keys == keys,
-            "send only the expected changes, including the release on focus loss");
+            "send only gameplay changes and release held keys on focus loss, scene changes and disconnect");
     }
     char tail;
-    Check(recv(peer.value, &tail, 1, 0) == 0, "no extra input packets on repeats or unrelated keys");
-    std::cout << "PASS: game client sends input changes, suppresses repeats and releases held keys\n";
+    Check(recv(peer.value, &tail, 1, 0) == 0, "no gameplay packets from other scenes, UI keys or repeated keys");
+    std::cout << "PASS: game client routes keys by scene, suppresses repeats and releases held keys\n";
 }
 
 template<class Predicate> void WaitUntil(Predicate predicate, const char* label)

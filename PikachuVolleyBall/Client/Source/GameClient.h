@@ -17,6 +17,7 @@ public:
     bool IsConnected() const { return network_.IsConnected(); }
     void Disconnect();
     void ChangeScene(Scene scene);
+    // Only Playing forwards movement/action keys; other scenes keep their UI input.
     void OnKey(UINT msg, WPARAM key);
     void ReleaseInput();
     // The UI owns the packet and keeps it alive for the duration of this call.

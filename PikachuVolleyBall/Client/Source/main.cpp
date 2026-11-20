@@ -226,7 +226,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 	while ((result = GetMessage(&Message, 0, 0, 0)) > 0) {
 		if (!localGameStarted)
 		{
-			// Route game keys before dialog navigation consumes arrow keys.
+			// OnKey sends gameplay input only in Playing; form navigation stays with the dialog.
 			if (!joinAttempt.valid() && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
 				gameClient.OnKey(Message.message, Message.wParam);
 			if (gameClient.GetScene() != Scene::Playing && Message.message != WM_NET_EVENT &&
@@ -304,6 +304,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			return 0;
 		case WM_ACTIVATEAPP:
 			if (!wParam && !joinAttempt.valid()) gameClient.ReleaseInput();
+			break;
+		case WM_KILLFOCUS:
+		case WM_ENTERMENULOOP:
+		case WM_ENTERSIZEMOVE:
+			if (!joinAttempt.valid()) gameClient.ReleaseInput();
 			break;
 		case DM_GETDEFID:
 			return IsWindowEnabled(GetDlgItem(hWnd, ConnectScreen::JoinButton))
