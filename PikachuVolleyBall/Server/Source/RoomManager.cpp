@@ -93,6 +93,34 @@ void RoomManager::RemoveRoom(int roomNo)
     std::printf("[rooms] removed room %d, %d left\n", roomNo, remaining);
 }
 
+bool RoomManager::RemoveIfEmpty(Room* room)
+{
+    if (room == nullptr) return false;
+
+    Room* removed = nullptr;
+    int removedNo = 0;
+    int remaining = 0;
+    EnterCriticalSection(&csRooms_);
+    for (int i = 0; i < roomCount_; ++i)
+    {
+        if (rooms_[i] != room) continue;
+        if (!room->AllLeft()) break;
+        removed = rooms_[i];
+        removedNo = roomNos_[i];
+        rooms_[i] = rooms_[roomCount_ - 1];
+        roomNos_[i] = roomNos_[roomCount_ - 1];
+        rooms_[roomCount_ - 1] = nullptr;
+        --roomCount_;
+        break;
+    }
+    remaining = roomCount_;
+    LeaveCriticalSection(&csRooms_);
+    if (removed == nullptr) return false;
+    delete removed;
+    std::printf("[rooms] removed room %d, %d left\n", removedNo, remaining);
+    return true;
+}
+
 bool RoomManager::RemoveIfWaiting(Room* room)
 {
     if (room == nullptr) return false;

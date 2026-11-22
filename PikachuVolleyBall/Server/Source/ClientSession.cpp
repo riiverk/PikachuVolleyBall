@@ -370,7 +370,10 @@ void ClientSession::Disconnect()
     LeaveCriticalSection(&stateLock_);
     CloseSocket();
     if (room == nullptr) return;
-    if (rooms_ != nullptr && rooms_->RemoveIfWaiting(room))
+    const bool onRoomThread = room->IsRoomThread();
+    room->OnPlayerLeave(index);
+    if (onRoomThread || rooms_ == nullptr)return;
+    if (rooms_->RemoveIfEmpty(room))
     {
         EnterCriticalSection(&stateLock_);
         room_ = nullptr;
@@ -378,5 +381,4 @@ void ClientSession::Disconnect()
         LeaveCriticalSection(&stateLock_);
         return;
     }
-    room->OnPlayerLeave(index);
 }

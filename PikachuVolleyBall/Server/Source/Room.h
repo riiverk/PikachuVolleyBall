@@ -28,6 +28,8 @@ public:
     void OnNextStage(int idx);
     bool WaitNextStage();
     void OnPlayerLeave(int idx);
+    bool AllLeft();
+    bool IsRoomThread();
     void EndByQuit();
     void OnChat(int idx, const char* msg);
 private:
@@ -40,6 +42,7 @@ private:
     CRITICAL_SECTION csInput_;
     volatile LONG quitFlag_ = 0;
     HANDLE thread_ = nullptr;
+    DWORD threadId_ = 0;
     std::uint64_t nextTick_ = 0;
     int stage_ = 1;
     bool left[2]{};

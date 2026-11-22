@@ -77,6 +77,10 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
     Room* room = static_cast<Room*>(arg);
     if (room == nullptr) return 1;
 
+    EnterCriticalSection(&room->csInput_);
+    room->threadId_ = GetCurrentThreadId();
+    LeaveCriticalSection(&room->csInput_);
+
     std::uint8_t inputs[2]{};
     int serve = 0;
 
@@ -207,12 +211,32 @@ void Room::OnPlayerLeave(int idx)
 {
     if (idx < 0 || idx >= GameConst::PlayerCount) return;
 
+    std::printf("[room %d] Player %d left\n", roomNo_, idx + 1);
+    InterlockedExchange(&quitFlag_, 1);
+
     EnterCriticalSection(&csInput_);
     left[idx] = true;
     LeaveCriticalSection(&csInput_);
+}
 
-    InterlockedExchange(&quitFlag_, 1);
-    std::printf("[room %d] Player %d left\n", roomNo_, idx + 1);
+bool Room::AllLeft()
+{
+    bool all = true;
+    EnterCriticalSection(&csInput_);
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        if (players_[i] != nullptr && !left[i]) all = false;
+    }
+    LeaveCriticalSection(&csInput_);
+    return all;
+}
+
+bool Room::IsRoomThread()
+{
+    EnterCriticalSection(&csInput_);
+    const bool same = (threadId_ == GetCurrentThreadId());
+    LeaveCriticalSection(&csInput_);
+    return same;
 }
 void Room::EndByQuit() { /* TODO 11/24 */ } // left가 모두 false면 아무것도 하지 않도록 할 것
 void Room::OnChat(int, const char*) { /* TODO 11/24 */ }
