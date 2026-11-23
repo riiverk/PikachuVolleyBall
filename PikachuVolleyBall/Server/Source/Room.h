@@ -39,6 +39,8 @@ private:
     bool joinReplySent_[2]{};
     std::uint8_t inputs_[2]{};
     bool nextStageReady_[2]{};
+    bool waitingNextStage_ = false;
+    CONDITION_VARIABLE nextStageChanged_ = CONDITION_VARIABLE_INIT;
     CRITICAL_SECTION csInput_;
     volatile LONG quitFlag_ = 0;
     HANDLE thread_ = nullptr;

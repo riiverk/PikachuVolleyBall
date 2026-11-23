@@ -5,7 +5,10 @@
 Room::Room(int roomNo) : roomNo_(roomNo) { InitializeCriticalSection(&csInput_); }
 Room::~Room()
 {
+    EnterCriticalSection(&csInput_);
     InterlockedExchange(&quitFlag_, 1);
+    WakeAllConditionVariable(&nextStageChanged_);
+    LeaveCriticalSection(&csInput_);
     if (thread_ != nullptr)
     {
         WaitForSingleObject(thread_, INFINITE);
@@ -208,6 +211,13 @@ void Room::BroadcastStageOver()
     const int loser = world_.GetLoser();
     if (loser < 0) return;
 
+    // Accept an immediate NEXT_STAGE reply even while the notification is being sent.
+    if (stage_ < GameConst::StageCount)
+    {
+        EnterCriticalSection(&csInput_);
+        waitingNextStage_ = true;
+        LeaveCriticalSection(&csInput_);
+    }
     StageOverPacket packet;
     packet.stage = static_cast<std::uint8_t>(stage_);
     packet.winner = static_cast<std::uint8_t>(1 - loser);
@@ -235,8 +245,47 @@ void Room::BroadcastGameOver(std::uint8_t reason)
 
     Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
 }
-void Room::OnNextStage(int) { /* TODO 11/23 */ }
-bool Room::WaitNextStage() { return false; /* TODO 11/22 */ }
+void Room::OnNextStage(int idx)
+{
+    if (idx < 0 || idx >= GameConst::PlayerCount) return;
+    EnterCriticalSection(&csInput_);
+    if (waitingNextStage_ && InterlockedCompareExchange(&quitFlag_, 0, 0) == 0)
+    {
+        nextStageReady_[idx] = true;
+        if (nextStageReady_[0] && nextStageReady_[1])
+            WakeAllConditionVariable(&nextStageChanged_);
+    }
+    LeaveCriticalSection(&csInput_);
+}
+
+bool Room::WaitNextStage()
+{
+    EnterCriticalSection(&csInput_);
+    if (!waitingNextStage_)
+    {
+        LeaveCriticalSection(&csInput_);
+        return false;
+    }
+    while (!(nextStageReady_[0] && nextStageReady_[1]) &&
+        InterlockedCompareExchange(&quitFlag_, 0, 0) == 0)
+    {
+        if (!SleepConditionVariableCS(&nextStageChanged_, &csInput_, INFINITE))
+        {
+            waitingNextStage_ = false;
+            break;
+        }
+    }
+    const bool ready = waitingNextStage_ && nextStageReady_[0] && nextStageReady_[1] &&
+        InterlockedCompareExchange(&quitFlag_, 0, 0) == 0;
+    waitingNextStage_ = false;
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        nextStageReady_[i] = false;
+        inputs_[i] = 0;
+    }
+    LeaveCriticalSection(&csInput_);
+    return ready;
+}
 void Room::OnPlayerLeave(int idx)
 {
     if (idx < 0 || idx >= GameConst::PlayerCount) return;
@@ -246,6 +295,7 @@ void Room::OnPlayerLeave(int idx)
 
     EnterCriticalSection(&csInput_);
     left[idx] = true;
+    WakeAllConditionVariable(&nextStageChanged_);
     LeaveCriticalSection(&csInput_);
 }
 

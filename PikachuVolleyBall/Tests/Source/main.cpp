@@ -68,6 +68,11 @@ struct RoomTestAccess
 {
     static GameWorld& World(Room& room) { return room.world_; }
     static void SetStage(Room& room, int stage) { room.stage_ = stage; }
+    static void Bind(ClientSession& session, Room& room, int index)
+    {
+        session.room_ = &room;
+        session.playerIndex_ = index;
+    }
 };
 
 namespace
@@ -2099,6 +2104,129 @@ void RoomGameOverTest()
     std::cout << "PASS: GAME_OVER packets for final results, quits and invalid-result suppression\n";
 }
 
+struct NextStageWaiter
+{
+    Room& room;
+    HANDLE thread = nullptr;
+    bool ready = false;
+
+    explicit NextStageWaiter(Room& target) : room(target)
+    {
+        thread = CreateThread(nullptr, 0, Run, this, 0, nullptr);
+        Check(thread != nullptr, "start next-stage waiter");
+    }
+    ~NextStageWaiter()
+    {
+        if (thread != nullptr)
+        {
+            room.OnPlayerLeave(0);
+            WaitForSingleObject(thread, INFINITE);
+            CloseHandle(thread);
+        }
+    }
+    static DWORD WINAPI Run(LPVOID arg)
+    {
+        auto& waiter = *static_cast<NextStageWaiter*>(arg);
+        waiter.ready = waiter.room.WaitNextStage();
+        if (waiter.ready)
+        {
+            GameWorld& world = RoomTestAccess::World(waiter.room);
+            const int serve = 1 - world.GetLoser();
+            world.Reset(2, serve);
+            RoomTestAccess::SetStage(waiter.room, 2);
+            waiter.room.BroadcastGameStart(2, serve);
+        }
+        return 0;
+    }
+    void Finish()
+    {
+        Check(WaitForSingleObject(thread, 2000) == WAIT_OBJECT_0, "next-stage wait finishes promptly");
+        CloseHandle(thread);
+        thread = nullptr;
+    }
+};
+
+void RoomNextStageTest()
+{
+    for (int cancel = 0; cancel < 2; ++cancel)
+    {
+        Stream first, second;
+        Room room;
+        ClientSession player0(std::exchange(first.receiver.value, INVALID_SOCKET));
+        ClientSession player1(std::exchange(second.receiver.value, INVALID_SOCKET));
+        room.AddPlayer(&player0);
+        room.AddPlayer(&player1);
+        RoomTestAccess::Bind(player0, room, 0);
+        RoomTestAccess::Bind(player1, room, 1);
+        Check(player0.Start() && player1.Start(), "start NEXT_STAGE session receivers");
+        for (Stream* stream : {&first, &second})
+        {
+            const DWORD timeout = 2000;
+            Check(setsockopt(stream->sender.value, SOL_SOCKET, SO_RCVTIMEO,
+                reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0, "next-stage receive timeout");
+        }
+        room.OnNextStage(0);
+        room.OnNextStage(1);
+        Check(!room.WaitNextStage(), "ready requests during play do not start a stage");
+        GameWorldTestAccess::FinishFirstStage(RoomTestAccess::World(room), 0);
+        room.BroadcastStageOver();
+        for (Stream* stream : {&first, &second})
+        {
+            StageOverPacket packet;
+            Check(recvn(stream->sender.value, reinterpret_cast<char*>(&packet), sizeof(packet), 0) == sizeof(packet) &&
+                packet.type == PacketType::STAGE_OVER && packet.winner == 1, "stage result precedes readiness");
+        }
+        NextStageWaiter waiting(room);
+        Check(WaitForSingleObject(waiting.thread, 30) == WAIT_TIMEOUT, "wait for both players");
+        room.OnNextStage(-1);
+        room.OnNextStage(2);
+        NextStagePacket request;
+        first.Send(reinterpret_cast<const char*>(&request), sizeof(request));
+        first.Send(reinterpret_cast<const char*>(&request), sizeof(request));
+        WaitUntil([&] { return player0.GetReceivedCount() == 2; }, "duplicate ready packets are dispatched");
+        Check(WaitForSingleObject(waiting.thread, 30) == WAIT_TIMEOUT, "one player cannot confirm both seats");
+        room.SetInput(0, RIGHT | ACTION);
+        if (cancel)
+        {
+            room.OnPlayerLeave(1);
+            waiting.Finish();
+            Check(!waiting.ready, "departure cancels the readiness wait");
+        }
+        else
+        {
+            second.Send(reinterpret_cast<const char*>(&request), sizeof(request));
+            for (Stream* stream : {&first, &second})
+            {
+                GameStartPacket packet;
+                Check(recvn(stream->sender.value, reinterpret_cast<char*>(&packet), sizeof(packet), 0) == sizeof(packet) &&
+                    packet.type == PacketType::GAME_START && packet.stage == 2 && packet.serveSide == 1,
+                    "both players start stage two with the previous winner serving");
+            }
+            waiting.Finish();
+            Check(waiting.ready, "both readiness confirmations release the waiter");
+            GameStatePacket state;
+            RoomTestAccess::World(room).FillState(state);
+            Check(state.tick == 0 && state.p[0].evil == 1 && state.p[1].evil == 0,
+                "stage two resets the world and awakens its first-stage loser");
+            std::uint8_t inputs[2]{};
+            room.CopyInputs(inputs);
+            Check(inputs[0] == 0 && inputs[1] == 0 && !room.WaitNextStage(),
+                "stale inputs and readiness do not carry into the new stage");
+        }
+        player0.Disconnect();
+        player1.Disconnect();
+        Check(player0.WaitForFinish(2000) && player1.WaitForFinish(2000), "readiness session workers stop");
+    }
+
+    Room preconfirmed;
+    GameWorldTestAccess::FinishFirstStage(RoomTestAccess::World(preconfirmed), 1);
+    preconfirmed.BroadcastStageOver();
+    preconfirmed.OnNextStage(0);
+    preconfirmed.OnNextStage(1);
+    Check(preconfirmed.WaitNextStage(), "confirmations arriving before the wait are retained");
+    std::cout << "PASS: NEXT_STAGE over TCP, duplicate suppression, stage-two start and departure cancellation\n";
+}
+
 void RoomEventsBroadcastTest()
 {
     Stream first, second, outside;
@@ -2403,8 +2531,85 @@ void JoinResultTest()
     FD_SET(lone.value, &readSet);
     const timeval immediate{};
     Check(select(0, &readSet, nullptr, nullptr, &immediate) == 0, "a different room does not receive match packets");
+
+    auto receivePair = [&] {
+        std::array<char, MAX_PACKET_SIZE> firstPacket{}, secondPacket{};
+        auto read = [](SOCKET socket, auto& bytes) {
+            PacketHeader header{};
+            Check(recvn(socket, reinterpret_cast<char*>(&header), sizeof(header), 0) == sizeof(header) &&
+                header.size >= sizeof(header) && header.size <= MAX_PACKET_SIZE && PacketSize(header.type) == header.size,
+                "receive a valid frame during stage progression");
+            std::memcpy(bytes.data(), &header, sizeof(header));
+            const int body = header.size - sizeof(header);
+            Check(recvn(socket, bytes.data() + sizeof(header), body, 0) == body, "receive complete result frame");
+            return header;
+        };
+        const auto a = read(first.value, firstPacket);
+        const auto b = read(second.value, secondPacket);
+        Check(a.size == b.size && std::memcmp(firstPacket.data(), secondPacket.data(), a.size) == 0,
+            "both clients receive identical match frames through both stages");
+        return firstPacket;
+    };
+    for (int stage = 1; stage <= GameConst::StageCount; ++stage)
+    {
+        // Move both players away from the serve locations so each rally reaches the floor.
+        InputPacket input; input.keys = LEFT;
+        SendBytes(first.value, reinterpret_cast<const char*>(&input), sizeof(input));
+        SendBytes(second.value, reinterpret_cast<const char*>(&input), sizeof(input));
+        const ULONGLONG deadline = GetTickCount64() + 20000;
+        int winner = -1;
+        while (winner < 0)
+        {
+            Check(GetTickCount64() < deadline, "the actual room loop completes the stage");
+            const auto bytes = receivePair();
+            PacketHeader header{};
+            std::memcpy(&header, bytes.data(), sizeof(header));
+            if (header.type == PacketType::STAGE_OVER)
+            {
+                StageOverPacket result;
+                std::memcpy(&result, bytes.data(), sizeof(result));
+                Check(result.stage == stage && result.winner == (stage == 1 ? 1 : 0),
+                    "natural floor scores produce the expected stage winner");
+                winner = result.winner;
+            }
+            else if (header.type == PacketType::GAME_STATE)
+            {
+                GameStatePacket state;
+                std::memcpy(&state, bytes.data(), sizeof(state));
+                Check(state.p[0].evil == (stage == 2 ? 1 : 0) && state.p[1].evil == 0,
+                    "only the first-stage loser awakens in the actual second stage");
+            }
+            else Check(header.type == PacketType::EVENT || header.type == PacketType::SCORE,
+                "stage frames contain state, events or scores before the result");
+        }
+        if (stage == 1)
+        {
+            NextStagePacket ready;
+            SendBytes(first.value, reinterpret_cast<const char*>(&ready), sizeof(ready));
+            SendBytes(first.value, reinterpret_cast<const char*>(&ready), sizeof(ready));
+            FD_ZERO(&readSet); FD_SET(first.value, &readSet);
+            const timeval brief{0, 30000};
+            Check(select(0, &readSet, nullptr, nullptr, &brief) == 0,
+                "the room does not start stage two after one client repeats readiness");
+            SendBytes(second.value, reinterpret_cast<const char*>(&ready), sizeof(ready));
+            const auto bytes = receivePair();
+            GameStartPacket start;
+            std::memcpy(&start, bytes.data(), sizeof(start));
+            Check(start.type == PacketType::GAME_START && start.stage == 2 && start.serveSide == winner,
+                "both NEXT_STAGE requests advance the real room loop with the winner serving");
+        }
+        else
+        {
+            const auto bytes = receivePair();
+            GameOverPacket result;
+            std::memcpy(&result, bytes.data(), sizeof(result));
+            Check(result.type == PacketType::GAME_OVER && result.winner == winner &&
+                result.reason == GameOverReason::Normal, "the real room loop sends the final result");
+        }
+    }
     running.Finish();
     std::cout << "PASS: JOIN_RESULT, GAME_START and matching GAME_STATE ticks for two TCP clients\n";
+    std::cout << "PASS: full room loop through STAGE_OVER, two NEXT_STAGE requests and GAME_OVER over TCP\n";
 }
 
 void RoomRemoveTest()
@@ -2510,6 +2715,7 @@ int main()
     {
         RoomStageOverTest();
         RoomGameOverTest();
+        RoomNextStageTest();
         RoomEventsBroadcastTest();
         JoinResultTest();
         GameStateSnapshotTest();

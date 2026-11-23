@@ -24,6 +24,7 @@ public:
     bool SendPacket(const char* buf, int len);
     void Disconnect();
 private:
+    friend struct RoomTestAccess;
     SOCKET GetSocket() const;
     bool ReceiveExact(SOCKET socket, char* buffer, int length, bool atPacketStart);
     bool IsStopping() const;
