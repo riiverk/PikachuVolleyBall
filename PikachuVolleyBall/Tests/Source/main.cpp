@@ -2038,6 +2038,67 @@ void RoomStageOverTest()
     std::cout << "PASS: STAGE_OVER packets for either winner in both stages over TCP\n";
 }
 
+void RoomGameOverTest()
+{
+    for (int loser = 0; loser < GameConst::PlayerCount; ++loser)
+    {
+        Stream first, second;
+        ClientSession player0(std::exchange(first.receiver.value, INVALID_SOCKET));
+        ClientSession player1(std::exchange(second.receiver.value, INVALID_SOCKET));
+        Room room;
+        room.AddPlayer(&player0);
+        room.AddPlayer(&player1);
+        for (Stream* stream : {&first, &second})
+        {
+            const DWORD timeout = 2000;
+            Check(setsockopt(stream->sender.value, SOL_SOCKET, SO_RCVTIMEO,
+                reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0, "game result receive timeout");
+        }
+        auto receiveBoth = [&](GameOverReason reason) {
+            GameOverPacket expected;
+            expected.winner = static_cast<std::uint8_t>(1 - loser);
+            expected.reason = reason;
+            for (Stream* stream : {&first, &second})
+            {
+                GameOverPacket received;
+                Check(recvn(stream->sender.value, reinterpret_cast<char*>(&received), sizeof(received), 0) == sizeof(received) &&
+                    std::memcmp(&received, &expected, sizeof(received)) == 0,
+                    "GAME_OVER contains the final winner and requested reason");
+            }
+        };
+        GameWorld& world = RoomTestAccess::World(room);
+        room.BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Normal));
+        room.BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Quit));
+        room.BroadcastGameOver(255);
+        RoomTestAccess::SetStage(room, 2);
+        world.Reset(2, 0);
+        const std::uint8_t idle[2]{};
+        world.Update(idle);
+        for (int point = 0; point < GameConst::WinningScore; ++point)
+        {
+            GameWorldTestAccess::SetBall(world, {loser == 0 ? 450.0f : 600.0f, 635, 0, 400, 0});
+            world.CheckScore();
+        }
+        room.BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Normal));
+        receiveBoth(GameOverReason::Normal);
+        room.OnPlayerLeave(loser);
+        room.BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Quit));
+        receiveBoth(GameOverReason::Quit);
+        room.OnPlayerLeave(1 - loser);
+        room.BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Quit));
+        for (Stream* stream : {&first, &second})
+        {
+            fd_set readable;
+            FD_ZERO(&readable);
+            FD_SET(stream->sender.value, &readable);
+            const timeval immediate{};
+            Check(select(0, &readable, nullptr, nullptr, &immediate) == 0,
+                "unfinished or invalid results and two departures do not invent a winner");
+        }
+    }
+    std::cout << "PASS: GAME_OVER packets for final results, quits and invalid-result suppression\n";
+}
+
 void RoomEventsBroadcastTest()
 {
     Stream first, second, outside;
@@ -2448,6 +2509,7 @@ int main()
     try
     {
         RoomStageOverTest();
+        RoomGameOverTest();
         RoomEventsBroadcastTest();
         JoinResultTest();
         GameStateSnapshotTest();

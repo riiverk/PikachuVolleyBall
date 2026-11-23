@@ -213,7 +213,28 @@ void Room::BroadcastStageOver()
     packet.winner = static_cast<std::uint8_t>(1 - loser);
     Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
 }
-void Room::BroadcastGameOver(std::uint8_t) { /* TODO 11/21 */ }
+void Room::BroadcastGameOver(std::uint8_t reason)
+{
+    GameOverPacket packet;
+    packet.reason = static_cast<GameOverReason>(reason);
+    if (packet.reason == GameOverReason::Normal)
+    {
+        const int loser = world_.GetLoser();
+        if (stage_ != GameConst::StageCount || loser < 0) return;
+        packet.winner = static_cast<std::uint8_t>(1 - loser);
+    }
+    else if (packet.reason == GameOverReason::Quit)
+    {
+        EnterCriticalSection(&csInput_);
+        if (left[0] != left[1])
+            packet.winner = left[0] ? 1 : 0;
+        LeaveCriticalSection(&csInput_);
+        if (packet.winner == NO_PLAYER) return;
+    }
+    else return;
+
+    Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
+}
 void Room::OnNextStage(int) { /* TODO 11/23 */ }
 bool Room::WaitNextStage() { return false; /* TODO 11/22 */ }
 void Room::OnPlayerLeave(int idx)
