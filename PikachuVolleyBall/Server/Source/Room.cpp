@@ -203,7 +203,16 @@ void Room::BroadcastEvents()
         }
     }
 }
-void Room::BroadcastStageOver() { /* TODO 11/20 */ }
+void Room::BroadcastStageOver()
+{
+    const int loser = world_.GetLoser();
+    if (loser < 0) return;
+
+    StageOverPacket packet;
+    packet.stage = static_cast<std::uint8_t>(stage_);
+    packet.winner = static_cast<std::uint8_t>(1 - loser);
+    Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
+}
 void Room::BroadcastGameOver(std::uint8_t) { /* TODO 11/21 */ }
 void Room::OnNextStage(int) { /* TODO 11/23 */ }
 bool Room::WaitNextStage() { return false; /* TODO 11/22 */ }

@@ -67,6 +67,7 @@ struct GameClientTestAccess
 struct RoomTestAccess
 {
     static GameWorld& World(Room& room) { return room.world_; }
+    static void SetStage(Room& room, int stage) { room.stage_ = stage; }
 };
 
 namespace
@@ -1993,6 +1994,50 @@ void ClientProcessPacketTest()
     std::cout << "PASS: client ProcessPacket stores GAME_STATE and posts other server packets to the window\n";
 }
 
+void RoomStageOverTest()
+{
+    Stream first, second;
+    ClientSession player0(std::exchange(first.receiver.value, INVALID_SOCKET));
+    ClientSession player1(std::exchange(second.receiver.value, INVALID_SOCKET));
+    Room room;
+    room.AddPlayer(&player0);
+    room.AddPlayer(&player1);
+    for (Stream* stream : {&first, &second})
+    {
+        const DWORD timeout = 2000;
+        Check(setsockopt(stream->sender.value, SOL_SOCKET, SO_RCVTIMEO,
+            reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0, "stage result receive timeout");
+    }
+    for (int stage = 1; stage <= GameConst::StageCount; ++stage)
+    {
+        for (int loser = 0; loser < GameConst::PlayerCount; ++loser)
+        {
+            GameWorld& world = RoomTestAccess::World(room);
+            world.Reset(stage, 0);
+            RoomTestAccess::SetStage(room, stage);
+            const std::uint8_t idle[2]{};
+            world.Update(idle);
+            for (int point = 0; point < GameConst::WinningScore; ++point)
+            {
+                GameWorldTestAccess::SetBall(world, {loser == 0 ? 450.0f : 600.0f, 635, 0, 400, 0});
+                world.CheckScore();
+            }
+            room.BroadcastStageOver();
+            StageOverPacket expected;
+            expected.stage = static_cast<std::uint8_t>(stage);
+            expected.winner = static_cast<std::uint8_t>(1 - loser);
+            for (Stream* stream : {&first, &second})
+            {
+                StageOverPacket received;
+                Check(recvn(stream->sender.value, reinterpret_cast<char*>(&received), sizeof(received), 0) == sizeof(received) &&
+                    std::memcmp(&received, &expected, sizeof(received)) == 0,
+                    "both players receive the completed stage and correct winner");
+            }
+        }
+    }
+    std::cout << "PASS: STAGE_OVER packets for either winner in both stages over TCP\n";
+}
+
 void RoomEventsBroadcastTest()
 {
     Stream first, second, outside;
@@ -2402,6 +2447,7 @@ int main()
     int code = 0;
     try
     {
+        RoomStageOverTest();
         RoomEventsBroadcastTest();
         JoinResultTest();
         GameStateSnapshotTest();
