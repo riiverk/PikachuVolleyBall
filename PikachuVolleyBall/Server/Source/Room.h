@@ -40,6 +40,7 @@ private:
     std::uint8_t inputs_[2]{};
     bool nextStageReady_[2]{};
     bool waitingNextStage_ = false;
+    bool gameOverSent_ = false;
     CONDITION_VARIABLE nextStageChanged_ = CONDITION_VARIABLE_INIT;
     CRITICAL_SECTION csInput_;
     volatile LONG quitFlag_ = 0;

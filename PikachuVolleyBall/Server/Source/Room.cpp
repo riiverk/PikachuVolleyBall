@@ -226,6 +226,7 @@ void Room::BroadcastStageOver()
 void Room::BroadcastGameOver(std::uint8_t reason)
 {
     GameOverPacket packet;
+    ClientSession* recipient = nullptr;
     packet.reason = static_cast<GameOverReason>(reason);
     if (packet.reason == GameOverReason::Normal)
     {
@@ -233,17 +234,30 @@ void Room::BroadcastGameOver(std::uint8_t reason)
         if (stage_ != GameConst::StageCount || loser < 0) return;
         packet.winner = static_cast<std::uint8_t>(1 - loser);
     }
-    else if (packet.reason == GameOverReason::Quit)
+    else if (packet.reason != GameOverReason::Quit) return;
+
+    EnterCriticalSection(&csInput_);
+    if (gameOverSent_)
     {
-        EnterCriticalSection(&csInput_);
+        LeaveCriticalSection(&csInput_);
+        return;
+    }
+    if (packet.reason == GameOverReason::Quit)
+    {
         if (left[0] != left[1])
             packet.winner = left[0] ? 1 : 0;
-        LeaveCriticalSection(&csInput_);
-        if (packet.winner == NO_PLAYER) return;
+        if (packet.winner != NO_PLAYER) recipient = players_[packet.winner];
+        if (recipient == nullptr)
+        {
+            LeaveCriticalSection(&csInput_);
+            return;
+        }
     }
-    else return;
+    gameOverSent_ = true;
+    LeaveCriticalSection(&csInput_);
 
-    Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
+    if (recipient != nullptr) recipient->SendPacket(reinterpret_cast<const char*>(&packet), sizeof(packet));
+    else Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));
 }
 void Room::OnNextStage(int idx)
 {
@@ -291,10 +305,10 @@ void Room::OnPlayerLeave(int idx)
     if (idx < 0 || idx >= GameConst::PlayerCount) return;
 
     std::printf("[room %d] Player %d left\n", roomNo_, idx + 1);
-    InterlockedExchange(&quitFlag_, 1);
-
     EnterCriticalSection(&csInput_);
     left[idx] = true;
+    // Publish the departure before the room thread observes the stop request.
+    InterlockedExchange(&quitFlag_, 1);
     WakeAllConditionVariable(&nextStageChanged_);
     LeaveCriticalSection(&csInput_);
 }
@@ -318,5 +332,22 @@ bool Room::IsRoomThread()
     LeaveCriticalSection(&csInput_);
     return same;
 }
-void Room::EndByQuit() { /* TODO 11/24 */ } // left가 모두 false면 아무것도 하지 않도록 할 것
+void Room::EndByQuit()
+{
+    EnterCriticalSection(&csInput_);
+    if (left[0] == left[1] || players_[left[0] ? 1 : 0] == nullptr)
+    {
+        LeaveCriticalSection(&csInput_);
+        return;
+    }
+    InterlockedExchange(&quitFlag_, 1);
+    waitingNextStage_ = false;
+    WakeAllConditionVariable(&nextStageChanged_);
+    LeaveCriticalSection(&csInput_);
+
+    // A completed final-stage result takes precedence over a subsequent departure.
+    const GameOverReason reason = stage_ == GameConst::StageCount && world_.IsStageOver() ?
+        GameOverReason::Normal : GameOverReason::Quit;
+    BroadcastGameOver(static_cast<std::uint8_t>(reason));
+}
 void Room::OnChat(int, const char*) { /* TODO 11/24 */ }

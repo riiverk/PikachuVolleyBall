@@ -70,6 +70,10 @@ struct RoomTestAccess
 {
     static GameWorld& World(Room& room) { return room.world_; }
     static void SetStage(Room& room, int stage) { room.stage_ = stage; }
+    static bool WaitForEnd(Room& room)
+    {
+        return WaitForSingleObject(room.thread_, 2000) == WAIT_OBJECT_0;
+    }
     static void Bind(ClientSession& session, Room& room, int index)
     {
         session.room_ = &room;
@@ -2155,7 +2159,7 @@ void RoomGameOverTest()
         receiveBoth(GameOverReason::Normal);
         room.OnPlayerLeave(loser);
         room.BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Quit));
-        receiveBoth(GameOverReason::Quit);
+        room.EndByQuit();
         room.OnPlayerLeave(1 - loser);
         room.BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Quit));
         for (Stream* stream : {&first, &second})
@@ -2168,7 +2172,7 @@ void RoomGameOverTest()
                 "unfinished or invalid results and two departures do not invent a winner");
         }
     }
-    std::cout << "PASS: GAME_OVER packets for final results, quits and invalid-result suppression\n";
+    std::cout << "PASS: GAME_OVER packets preserve final results and suppress invalid or duplicate outcomes\n";
 }
 
 struct NextStageWaiter
@@ -2292,6 +2296,157 @@ void RoomNextStageTest()
     preconfirmed.OnNextStage(1);
     Check(preconfirmed.WaitNextStage(), "confirmations arriving before the wait are retained");
     std::cout << "PASS: NEXT_STAGE over TCP, duplicate suppression, stage-two start and departure cancellation\n";
+}
+
+void RoomQuitTest()
+{
+    for (int betweenStages = 0; betweenStages < 2; ++betweenStages)
+    {
+        for (int leaver = 0; leaver < GameConst::PlayerCount; ++leaver)
+        {
+            Stream first, second;
+            for (Stream* stream : {&first, &second})
+            {
+                const DWORD noTimeout = 0;
+                Check(setsockopt(stream->receiver.value, SOL_SOCKET, SO_RCVTIMEO,
+                    reinterpret_cast<const char*>(&noTimeout), sizeof(noTimeout)) == 0,
+                    "keep idle session receivers alive through the stage");
+            }
+            Room room;
+            ClientSession player0(std::exchange(first.receiver.value, INVALID_SOCKET));
+            ClientSession player1(std::exchange(second.receiver.value, INVALID_SOCKET));
+            room.AddPlayer(&player0);
+            room.AddPlayer(&player1);
+            RoomTestAccess::Bind(player0, room, 0);
+            RoomTestAccess::Bind(player1, room, 1);
+            Check(player0.Start() && player1.Start(), "start quit test session workers");
+            for (Stream* stream : {&first, &second})
+            {
+                const DWORD timeout = 2000;
+                Check(setsockopt(stream->sender.value, SOL_SOCKET, SO_RCVTIMEO,
+                    reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0, "quit result timeout");
+            }
+            auto read = [](SOCKET socket) {
+                std::array<char, MAX_PACKET_SIZE> bytes{};
+                PacketHeader header{};
+                Check(recvn(socket, reinterpret_cast<char*>(&header), sizeof(header), 0) == sizeof(header) &&
+                    header.size >= sizeof(header) && header.size <= MAX_PACKET_SIZE && PacketSize(header.type) == header.size,
+                    "receive valid match frame while waiting for a quit result");
+                std::memcpy(bytes.data(), &header, sizeof(header));
+                const int body = header.size - sizeof(header);
+                Check(recvn(socket, bytes.data() + sizeof(header), body, 0) == body, "receive complete quit test frame");
+                return bytes;
+            };
+            room.Start();
+            for (Stream* stream : {&first, &second})
+            {
+                const auto bytes = read(stream->sender.value);
+                GameStartPacket start;
+                std::memcpy(&start, bytes.data(), sizeof(start));
+                Check(start.type == PacketType::GAME_START && start.stage == 1, "quit test starts a real match");
+            }
+            if (betweenStages)
+            {
+                InputPacket move; move.keys = LEFT;
+                first.Send(reinterpret_cast<const char*>(&move), sizeof(move));
+                second.Send(reinterpret_cast<const char*>(&move), sizeof(move));
+                const ULONGLONG deadline = GetTickCount64() + 20000;
+                bool finished = false;
+                while (!finished)
+                {
+                    Check(GetTickCount64() < deadline, "reach the readiness wait before quitting");
+                    const auto a = read(first.sender.value);
+                    const auto b = read(second.sender.value);
+                    PacketHeader header{};
+                    std::memcpy(&header, a.data(), sizeof(header));
+                    Check(std::memcmp(a.data(), b.data(), header.size) == 0, "both players reach the same stage result");
+                    finished = header.type == PacketType::STAGE_OVER;
+                }
+            }
+            Stream& leaving = leaver == 0 ? first : second;
+            Stream& survivor = leaver == 0 ? second : first;
+            if (leaver == 0)
+            {
+                LeavePacket leave;
+                leaving.Send(reinterpret_cast<const char*>(&leave), sizeof(leave));
+            }
+            else
+            {
+                const linger reset{1, 0};
+                Check(setsockopt(leaving.sender.value, SOL_SOCKET, SO_LINGER,
+                    reinterpret_cast<const char*>(&reset), sizeof(reset)) == 0, "simulate a reset connection");
+                closesocket(std::exchange(leaving.sender.value, INVALID_SOCKET));
+            }
+            bool received = false;
+            const ULONGLONG deadline = GetTickCount64() + 3000;
+            while (!received)
+            {
+                Check(GetTickCount64() < deadline, "survivor receives the quit result promptly");
+                const auto bytes = read(survivor.sender.value);
+                PacketHeader header{};
+                std::memcpy(&header, bytes.data(), sizeof(header));
+                if (header.type == PacketType::GAME_OVER)
+                {
+                    GameOverPacket result;
+                    std::memcpy(&result, bytes.data(), sizeof(result));
+                    Check(result.winner == 1 - leaver && result.reason == GameOverReason::Quit,
+                        "the remaining player wins after LEAVE or connection reset");
+                    received = true;
+                }
+            }
+            Check(RoomTestAccess::WaitForEnd(room), "quit ends the room worker during play or readiness wait");
+            room.EndByQuit();
+            room.EndByQuit();
+            fd_set readable;
+            FD_ZERO(&readable);
+            FD_SET(survivor.sender.value, &readable);
+            const timeval brief{0, 30000};
+            Check(select(0, &readable, nullptr, nullptr, &brief) == 0, "quit result is sent only once");
+            player0.Disconnect();
+            player1.Disconnect();
+            Check(player0.WaitForFinish(2000) && player1.WaitForFinish(2000), "quit session workers stop");
+        }
+    }
+    std::cout << "PASS: real room quit wins after LEAVE/reset during play or readiness, exactly once\n";
+}
+
+void RoomQuitSuppressionTest()
+{
+    Stream first, second;
+    ClientSession player0(std::exchange(first.receiver.value, INVALID_SOCKET));
+    ClientSession player1(std::exchange(second.receiver.value, INVALID_SOCKET));
+    Room room;
+    room.AddPlayer(&player0);
+    room.AddPlayer(&player1);
+    room.EndByQuit();
+    room.OnPlayerLeave(0);
+    std::thread a([&] { room.EndByQuit(); });
+    std::thread b([&] { room.EndByQuit(); });
+    a.join(); b.join();
+    const DWORD timeout = 2000;
+    setsockopt(second.sender.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    GameOverPacket result;
+    Check(recvn(second.sender.value, reinterpret_cast<char*>(&result), sizeof(result), 0) == sizeof(result) &&
+        result.type == PacketType::GAME_OVER && result.winner == 1 && result.reason == GameOverReason::Quit,
+        "concurrent quit handling sends one result to the survivor");
+    room.OnPlayerLeave(1);
+    room.EndByQuit();
+    for (Stream* stream : {&first, &second})
+    {
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(stream->sender.value, &readable);
+        const timeval immediate{};
+        Check(select(0, &readable, nullptr, nullptr, &immediate) == 0,
+            "no result goes to the departed player and duplicate results are suppressed");
+    }
+    Room empty;
+    empty.EndByQuit();
+    empty.OnPlayerLeave(0);
+    empty.OnPlayerLeave(1);
+    empty.EndByQuit();
+    Check(!RoomTestAccess::World(empty).IsStageOver(), "empty or fully departed rooms do not invent a score winner");
+    std::cout << "PASS: quit notifications handle repeated/concurrent calls and empty rooms\n";
 }
 
 void RoomEventsBroadcastTest()
@@ -2781,6 +2936,8 @@ int main()
     try
     {
         SessionDisconnectTest();
+        RoomQuitTest();
+        RoomQuitSuppressionTest();
         RoomStageOverTest();
         RoomGameOverTest();
         RoomNextStageTest();
