@@ -25,6 +25,13 @@ static bool IsValidJoin(const JoinRoomPacket& packet)
     return length > 0 && length < MAX_NICK;
 }
 
+static bool IsValidChat(const ChatPacket& packet)
+{
+    int length = 0;
+    while (length < MAX_CHAT && packet.msg[length] != '\0') ++length;
+    return length > 0 && length < MAX_CHAT;
+}
+
 ClientSession::ClientSession(SOCKET socket, RoomManager* rooms) : socket_(socket), rooms_(rooms)
 {
     InitializeCriticalSection(&stateLock_);
@@ -283,7 +290,11 @@ void ClientSession::ProcessPacket(char* buf)
     {
         ChatPacket packet;
         std::memcpy(&packet, buf, sizeof(packet));
-        packet.msg[MAX_CHAT - 1] = '\0';
+        if (!IsValidChat(packet))
+        {
+            std::printf("[session %lu] ignore invalid CHAT\n", GetCurrentThreadId());
+            break;
+        }
         if (room != nullptr) room->OnChat(index, packet.msg);
         else std::printf("[session %lu] ignore CHAT without room\n", GetCurrentThreadId());
         break;
