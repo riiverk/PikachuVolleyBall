@@ -846,7 +846,10 @@ void SessionDisconnectTest()
               "disconnect from another thread ends the blocked worker");
         Check(session.GetLastError() == 0, "local disconnect is a clean exit");
         char tail;
-        Check(recv(stream.sender.value, &tail, 1, 0) == 0, "peer sees the connection closed");
+        const int closeResult = recv(stream.sender.value, &tail, 1, 0);
+        const int closeError = closeResult == SOCKET_ERROR ? WSAGetLastError() : 0;
+        Check(closeResult == 0, ("peer sees the connection closed; recv=" + std::to_string(closeResult) +
+            ", Winsock=" + std::to_string(closeError)).c_str());
         InputPacket input;
         Check(!session.SendPacket(reinterpret_cast<const char*>(&input), sizeof(input)), "send after disconnect fails");
         session.Disconnect();
@@ -860,6 +863,22 @@ void SessionDisconnectTest()
         std::thread second([&] { session.Disconnect(); });
         first.join(); second.join();
         Check(session.WaitForFinish(2000) && session.GetLastError() == 0, "simultaneous disconnects close once");
+        char tail;
+        Check(recv(stream.sender.value, &tail, 1, 0) == 0, "concurrent disconnect sends a clean end of stream");
+    }
+    {
+        Stream stream;
+        ClientSession session(std::exchange(stream.receiver.value, INVALID_SOCKET));
+        Check(session.Start(), "start session for final frame delivery");
+        GameStatePacket state; state.tick = 42;
+        Check(session.SendPacket(reinterpret_cast<const char*>(&state), sizeof(state)), "send final frame before disconnect");
+        session.Disconnect();
+        Check(session.WaitForFinish(2000), "final frame session ends");
+        GameStatePacket received;
+        Check(recvn(stream.sender.value, reinterpret_cast<char*>(&received), sizeof(received), 0) == sizeof(received) &&
+            std::memcmp(&state, &received, sizeof(state)) == 0, "queued final frame arrives intact before EOF");
+        char tail;
+        Check(recv(stream.sender.value, &tail, 1, 0) == 0, "final frame is followed by a clean end of stream");
     }
     {
         Stream stream;
@@ -2761,6 +2780,7 @@ int main()
     int code = 0;
     try
     {
+        SessionDisconnectTest();
         RoomStageOverTest();
         RoomGameOverTest();
         RoomNextStageTest();
@@ -2771,7 +2791,7 @@ int main()
         ClientFailureTest(); GameClientJoinTest(); GameClientInputTest(); GameClientTimerTest(); GameClientNetEventTest();
         PlayerInputTest(); HorizontalMovementTest(); InputManagerTest();
         JumpTest(); SlideTest(); SessionThreadTest(); JoinRoomSendTest(); InputSendTest();
-        SessionSendTest(); SessionSendFrameIntegrityTest(); SessionDisconnectTest(); ProcessPacketTest(); RoomJoinTest(); RoomRemoveTest();
+        SessionSendTest(); SessionSendFrameIntegrityTest(); ProcessPacketTest(); RoomJoinTest(); RoomRemoveTest();
         BallGravityTest(); BallWallTest(); BallNetTest(); BallPlayerHitTest(); BallWallAndHeadTest();
         BallPlayerWorldTest(); StageResetTest(); GameWorldTickTest();
         ClientReceiveTest(); ClientProcessPacketTest(); ClientSessionRoundTripTest(); LinkScaffolds();

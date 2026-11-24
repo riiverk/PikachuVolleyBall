@@ -211,8 +211,8 @@ void ClientSession::CloseSocket()
     EnterCriticalSection(&stateLock_);
     if (socket_ != INVALID_SOCKET)
     {
-        // Lecture ch09: closesocket() starts the TCP close and frees the socket.
-        // It also cancels a blocking recv() waiting in this session's thread.
+        // Announce the end of the stream before releasing a socket with a pending recv.
+        shutdown(socket_, SD_BOTH);
         closesocket(socket_);
         socket_ = INVALID_SOCKET;
     }
