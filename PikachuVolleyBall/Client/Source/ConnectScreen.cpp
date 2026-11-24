@@ -1,6 +1,7 @@
 #include "ConnectScreen.h"
 #include "resource.h"
 #include <algorithm>
+#include <string>
 
 namespace
 {
@@ -75,14 +76,20 @@ bool ConnectScreen::Create(HWND window, HINSTANCE instance)
         {Nickname, L"EDIT", L"", WS_TABSTOP | ES_AUTOHSCROLL, WS_EX_CLIENTEDGE},
         {JoinButton, L"BUTTON", L"서버 접속", BS_OWNERDRAW | WS_TABSTOP, 0},
         {LocalPlayButton, L"BUTTON", L"로컬 2인 대전", BS_OWNERDRAW | WS_TABSTOP, 0},
-        {Status, L"STATIC", L"", SS_LEFT, 0}
+        {Status, L"STATIC", L"", SS_LEFT, 0},
+        {WaitingTitle, L"STATIC", L"", SS_CENTER, 0},
+        {WaitingRoom, L"STATIC", L"", SS_CENTER, 0},
+        {WaitingPlayer, L"STATIC", L"", SS_LEFT, 0},
+        {WaitingOpponent, L"STATIC", L"", SS_LEFT, 0},
+        {WaitingHint, L"STATIC", L"", SS_CENTER, 0},
+        {LeaveButton, L"BUTTON", L"방 나가기", BS_OWNERDRAW | WS_TABSTOP, 0}
     };
 
     const HFONT controlFont = font_ ? font_ : static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
     for (const auto& entry : controls)
     {
         const HWND control = CreateWindowExW(entry.extendedStyle, entry.type, entry.text,
-            WS_CHILD | WS_VISIBLE | entry.style, 0, 0, 0, 0, window,
+            WS_CHILD | (entry.id <= Status ? WS_VISIBLE : 0) | entry.style, 0, 0, 0, 0, window,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(entry.id)), instance, nullptr);
         if (!control)
         {
@@ -119,6 +126,52 @@ void ConnectScreen::Layout(HWND window) const
     move(JoinButton, 342, 38);
     move(LocalPlayButton, 390, 34);
     move(Status, 437, 30);
+    move(WaitingTitle, 120, 30);
+    move(WaitingRoom, 158, 26);
+    move(WaitingPlayer, 212, 56);
+    move(WaitingOpponent, 288, 56);
+    move(WaitingHint, 361, 52);
+    move(LeaveButton, 427, 34);
+    InvalidateRect(window, nullptr, FALSE);
+}
+
+void ConnectScreen::Hide(HWND window) const
+{
+    for (int id = IpLabel; id <= LeaveButton; ++id)
+        ShowWindow(GetDlgItem(window, id), SW_HIDE);
+}
+
+void ConnectScreen::ShowConnect(HWND window)
+{
+    waiting_ = false;
+    Hide(window);
+    for (int id = IpLabel; id <= Status; ++id)
+        ShowWindow(GetDlgItem(window, id), SW_SHOW);
+    InvalidateRect(window, nullptr, FALSE);
+}
+
+void ConnectScreen::ShowWaiting(HWND window, bool matched)
+{
+    wchar_t room[11]{}, nickname[MAX_NICK]{};
+    GetDlgItemTextW(window, RoomNumber, room, ARRAYSIZE(room));
+    GetDlgItemTextW(window, Nickname, nickname, ARRAYSIZE(nickname));
+    SetDlgItemTextW(window, WaitingTitle, matched ? L"매칭 완료!" : L"상대를 기다리고 있어요");
+    const std::wstring roomText = std::wstring(L"대기실 · 방 ") + room;
+    SetDlgItemTextW(window, WaitingRoom, roomText.c_str());
+    const std::wstring playerText = std::wstring(L"나 · 입장 완료\n") + nickname;
+    SetDlgItemTextW(window, WaitingPlayer, playerText.c_str());
+    SetDlgItemTextW(window, WaitingOpponent, matched
+        ? L"상대 플레이어 · 입장 완료\n곧 경기가 시작됩니다."
+        : L"상대 플레이어 · 대기 중\n같은 방 번호로 접속하면 만날 수 있어요.");
+    SetDlgItemTextW(window, WaitingHint, matched
+        ? L"경기 시작을 준비하고 있어요."
+        : L"상대 입장 후 자동으로 시작됩니다.");
+    const bool entering = !waiting_;
+    waiting_ = true;
+    Hide(window);
+    for (int id = WaitingTitle; id <= LeaveButton; ++id)
+        ShowWindow(GetDlgItem(window, id), SW_SHOW);
+    if (entering) SetFocus(window);
     InvalidateRect(window, nullptr, FALSE);
 }
 
@@ -139,6 +192,11 @@ void ConnectScreen::Paint(HWND window) const
     PaintRect(dc, panel, ink);
     PaintRect(dc, {panel.left + 3, panel.top + 99, panel.right - 3, panel.bottom - 3}, paper);
     PaintRect(dc, {panel.left + 3, panel.top + 94, panel.right - 3, panel.top + 99}, gold);
+    if (waiting_)
+    {
+        PaintRect(dc, {panel.left + padding, panel.top + 196, panel.right - padding, panel.top + 199}, gold);
+        PaintRect(dc, {panel.left + padding, panel.top + 274, panel.right - padding, panel.top + 275}, RGB(209, 217, 225));
+    }
     if (original)
     {
         TransparentBlt(dc, panel.left + (panelWidth - 276) / 2, panel.top + 4, 276, 79,
@@ -194,7 +252,7 @@ void ConnectScreen::PaintButton(const DRAWITEMSTRUCT& item) const
 
 void ConnectScreen::Destroy(HWND window)
 {
-    for (int id = IpLabel; id <= Status; ++id)
+    for (int id = IpLabel; id <= LeaveButton; ++id)
         if (const HWND control = GetDlgItem(window, id)) DestroyWindow(control);
     if (font_) DeleteObject(font_);
     if (sprites_) DeleteObject(sprites_);

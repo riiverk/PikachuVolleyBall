@@ -41,8 +41,8 @@ void EnableJoinFields(HWND window, bool enabled)
 
 void ShowConnectFields(HWND window, bool visible)
 {
-	for (int control = ConnectScreen::IpLabel; control <= ConnectScreen::Status; ++control)
-		ShowWindow(GetDlgItem(window, control), visible ? SW_SHOW : SW_HIDE);
+    if (visible) connectScreen.ShowConnect(window);
+    else connectScreen.Hide(window);
 }
 
 void StopOnline(HWND window)
@@ -64,10 +64,10 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 	switch (result)
 	{
 	case NetEventResult::Waiting:
-		SetJoinStatus(window, L"방에 입장했습니다. 상대를 기다리는 중…");
+		connectScreen.ShowWaiting(window, false);
 		break;
 	case NetEventResult::Matched:
-		SetJoinStatus(window, L"상대와 매칭되었습니다. 경기 시작을 기다리는 중…");
+		connectScreen.ShowWaiting(window, true);
 		break;
 	case NetEventResult::GameStarted:
 		if (!gameClient.StartRendering(window))
@@ -320,6 +320,15 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			return 0;
 		case WM_COMMAND:
 			if (HIWORD(wParam) != BN_CLICKED) return 0;
+			if ((LOWORD(wParam) == ConnectScreen::LeaveButton || LOWORD(wParam) == IDCANCEL) &&
+				gameClient.GetScene() == Scene::Waiting && !joinAttempt.valid())
+			{
+				StopOnline(hWnd);
+				EnableJoinFields(hWnd, true);
+				SetJoinStatus(hWnd, L"방에서 나왔습니다. 다시 접속할 수 있어요.");
+				SetFocus(GetDlgItem(hWnd, ConnectScreen::JoinButton));
+				return 0;
+			}
 			if (LOWORD(wParam) == ConnectScreen::JoinButton)
 				StartJoin(hWnd);
 			if (LOWORD(wParam) == ConnectScreen::LocalPlayButton && !joinAttempt.valid())
