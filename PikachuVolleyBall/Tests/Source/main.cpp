@@ -58,6 +58,8 @@ struct RendererTestAccess
 
 struct GameClientTestAccess
 {
+    static auto Scores(const GameClient& client) { return client.scores_; }
+
     static COLORREF Pixel(const GameClient& client, int x, int y)
     {
         return RendererTestAccess::Pixel(client.renderer_, x, y);
@@ -1848,8 +1850,49 @@ void GameClientTimerTest()
         "redraw the latest player and ball positions without stale sprites");
     Check(!HasNetEvent(window.handle), "GAME_STATE does not flood the UI with posted events");
 
+    ScorePacket score; score.scorer = 1; score.score[0] = 2; score.score[1] = 3;
+    const auto sendScore = [&]
+    {
+        SendBytes(peer.value, reinterpret_cast<const char*>(&score), sizeof(score));
+        return receive(PacketType::SCORE);
+    };
+    Check(sendScore() == NetEventResult::ScoreUpdated &&
+        GameClientTestAccess::Scores(client) == std::array<std::uint8_t, 2>{2, 3},
+        "SCORE replaces both totals with the server's values");
+    Check(sendScore() == NetEventResult::ScoreUpdated &&
+        GameClientTestAccess::Scores(client) == std::array<std::uint8_t, 2>{2, 3},
+        "a repeated SCORE does not add points twice");
+    score.scorer = NO_PLAYER;
+    Check(sendScore() == NetEventResult::Ignored, "ignore a SCORE with an invalid scorer");
+    score.scorer = 0; score.score[0] = GameConst::WinningScore + 1;
+    Check(sendScore() == NetEventResult::Ignored &&
+        GameClientTestAccess::Scores(client) == std::array<std::uint8_t, 2>{2, 3},
+        "invalid score totals do not replace the last valid scoreboard");
+    frame();
+    {
+        Renderer reference;
+        Check(reference.Initialize(window.handle), "initialize a reference scoreboard");
+        reference.Render(state, {2, 3});
+        for (const int edge : {50, GameConst::WindowWidth - 50 - 64})
+            for (int y = 50; y < 114; y += 4)
+                for (int x = edge; x < edge + 64; x += 4)
+                    Check(pixel(x, y) == RendererTestAccess::Pixel(reference, x, y),
+                        "the timer displays both received scores using the correct digit sprites");
+    }
+
+    client.ChangeScene(Scene::StageOver);
+    start.stage = 2;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&start), sizeof(start));
+    Check(receive(PacketType::GAME_START) == NetEventResult::GameStarted &&
+        GameClientTestAccess::Scores(client) == std::array<std::uint8_t, 2>{0, 0},
+        "a new stage starts with a fresh scoreboard");
+    Check(client.StartRendering(window.handle), "restart the rendering timer for the new stage");
+    score.score[0] = 1; score.score[1] = 0;
+    Check(sendScore() == NetEventResult::ScoreUpdated, "receive a score in the new stage");
     client.Disconnect();
-    Check(!client.OnTimer() && client.GetScene() == Scene::Connect, "disconnect stops online rendering");
+    Check(!client.OnTimer() && client.GetScene() == Scene::Connect &&
+        GameClientTestAccess::Scores(client) == std::array<std::uint8_t, 2>{0, 0},
+        "disconnect stops online rendering and clears the scoreboard");
     MSG message{};
     while (PeekMessage(&message, window.handle, WM_TIMER, WM_TIMER, PM_REMOVE)) {}
     std::this_thread::sleep_for(std::chrono::milliseconds(GameConst::TickMs * 3));
@@ -1858,11 +1901,16 @@ void GameClientTimerTest()
     Check(client.ConnectAndJoin(L"127.0.0.1", L"18", L"retry", listener.port) == JoinRequestResult::Sent,
         "reconnect the same rendering client");
     Socket retry; retry.value = listener.Accept();
+    SendBytes(retry.value, reinterpret_cast<const char*>(&score), sizeof(score));
+    Check(receive(PacketType::SCORE) == NetEventResult::Ignored &&
+        GameClientTestAccess::Scores(client) == std::array<std::uint8_t, 2>{0, 0},
+        "a score received before joining a game does not change the scoreboard");
     client.ChangeScene(Scene::Playing);
     Check(client.StartRendering(window.handle) && !client.OnTimer(), "reconnect does not render the previous connection's state");
     client.ChangeScene(Scene::Waiting);
     Check(!client.OnTimer(), "leaving the playing scene stops rendering");
     std::cout << "PASS: frame timer renders latest TCP state, clears old positions, stops and resets on reconnect\n";
+    std::cout << "PASS: SCORE updates both rendered totals without double counting, validates and resets between stages/connections\n";
 }
 
 void GameClientNetEventTest()

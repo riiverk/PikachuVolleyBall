@@ -2,10 +2,11 @@
 #include "NetworkClient.h"
 #include "InputManager.h"
 #include "Renderer.h"
+#include <array>
 
 enum class Scene { Connect, Waiting, Playing, StageOver, Result };
 enum class JoinRequestResult { Sent, InvalidAddress, InvalidRoom, InvalidNickname, ConnectionFailed, SendFailed };
-enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, GameStarted };
+enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, GameStarted, ScoreUpdated };
 
 class GameClient
 {
@@ -32,5 +33,6 @@ private:
     NetworkClient network_;
     InputManager input_;
     Renderer renderer_;
+    std::array<std::uint8_t, GameConst::PlayerCount> scores_{};
     HWND renderWindow_ = nullptr;
 };

@@ -69,6 +69,9 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 	case NetEventResult::Matched:
 		connectScreen.ShowWaiting(window, true);
 		break;
+	case NetEventResult::ScoreUpdated:
+		InvalidateRect(window, nullptr, FALSE);
+		break;
 	case NetEventResult::GameStarted:
 		if (!gameClient.StartRendering(window))
 		{

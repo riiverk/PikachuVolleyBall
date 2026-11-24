@@ -1,4 +1,5 @@
 #include "GameClient.h"
+#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -49,6 +50,7 @@ void GameClient::Disconnect()
     ReleaseInput();
     network_.Disconnect();
     ChangeScene(Scene::Connect);
+    scores_.fill(0);
 }
 
 void GameClient::ChangeScene(Scene scene)
@@ -116,8 +118,22 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         std::memcpy(&start, data, sizeof(start));
         if (start.stage == 0 || start.stage > GameConst::StageCount || start.serveSide >= GameConst::PlayerCount)
             break;
+        scores_.fill(0);
         ChangeScene(Scene::Playing);
         return NetEventResult::GameStarted;
+    }
+    case static_cast<WPARAM>(PacketType::SCORE):
+    {
+        if (scene_ != Scene::Playing) break;
+
+        ScorePacket score;
+        std::memcpy(&score, data, sizeof(score));
+        if (score.scorer >= GameConst::PlayerCount ||
+            score.score[0] > GameConst::WinningScore || score.score[1] > GameConst::WinningScore)
+            break;
+        // The server sends both totals. Copy them rather than counting received notifications.
+        std::copy_n(score.score, scores_.size(), scores_.begin());
+        return NetEventResult::ScoreUpdated;
     }
     }
     return NetEventResult::Ignored;
@@ -148,6 +164,6 @@ bool GameClient::OnTimer()
     if (!renderWindow_ || scene_ != Scene::Playing || !network_.IsConnected()) return false;
     GameStatePacket state;
     if (!network_.GetLatestState(state)) return false;
-    renderer_.Render(state);
+    renderer_.Render(state, scores_);
     return true;
 }
