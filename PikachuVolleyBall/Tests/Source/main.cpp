@@ -527,9 +527,21 @@ void HorizontalMovementTest()
     Check(state.p[0].x == 40 && state.p[1].x == 940, "independent horizontal movement at normal speed");
     Check(state.p[0].y == 560 && state.p[1].y == 560, "horizontal movement must not change height");
     Check(state.p[0].action == Action::Move && state.p[1].action == Action::Move, "walking state");
-    for (int tick = 0; tick < 100; ++tick) world.Update(keys);
+    Check(state.p[0].frame == 0 && state.p[1].frame == 0, "walking starts from the first frame");
+    for (int tick = 2; tick <= 101; ++tick)
+    {
+        world.Update(keys);
+        world.FillState(state);
+        if (tick == 5 || tick == 17 || tick == 29 || tick == 33)
+        {
+            const std::uint16_t expected = tick == 17 ? 4 : (tick == 33 ? 0 : 1);
+            Check(state.p[0].frame == expected && state.p[1].frame == expected,
+                "both walking animations advance, reverse and repeat");
+        }
+    }
     world.FillState(state);
     Check(state.p[0].x == GameConst::PlayerMaxX[0] && state.p[1].x == GameConst::PlayerMinX[1], "players cannot cross the net");
+    Check(state.p[0].frame == 0 && state.p[1].frame == 0, "walking animation stops when blocked by the court edge");
     keys[0] = LEFT; keys[1] = RIGHT;
     for (int tick = 0; tick < 100; ++tick) world.Update(keys);
     world.FillState(state);
@@ -540,6 +552,7 @@ void HorizontalMovementTest()
     world.FillState(stopped);
     Check(stopped.p[0].x == state.p[0].x && stopped.p[1].x == state.p[1].x, "release and opposite keys stop movement");
     Check(stopped.p[0].action == Action::Idle && stopped.p[1].action == Action::Idle, "idle state after stopping");
+    Check(stopped.p[0].frame == 0 && stopped.p[1].frame == 0, "idle uses the first frame");
 
     PlayerState awakened;
     awakened.x = 30; awakened.y = 560; awakened.evil = 1;
@@ -706,6 +719,8 @@ void JumpTest()
     Check(state.p[0].y == 535 && state.p[0].x == 40 && state.p[0].action == Action::Jump,
           "jump starts with the original upward velocity and permits horizontal movement");
     Check(state.p[1].y == 560 && state.p[1].action == Action::Idle, "other player stays grounded");
+    Check(state.p[0].frame == 0, "jump starts in the takeoff pose");
+    std::array<bool, 5> jumpFrames{true};
     int minimumY = state.p[0].y;
     bool landed = false;
     for (int tick = 1; tick <= 70; ++tick)
@@ -715,14 +730,19 @@ void JumpTest()
         minimumY = std::min(minimumY, static_cast<int>(state.p[0].y));
         Check(state.p[0].y <= 560, "jump never goes below the ground");
         if (state.p[0].y == 560) { landed = true; break; }
+        Check(state.p[0].frame < jumpFrames.size() && state.p[1].frame == 0,
+            "airborne animation stays in range and leaves the other player idle");
+        jumpFrames[state.p[0].frame] = true;
     }
     Check(landed && minimumY == 235 && state.p[0].action == Action::Move, "gravity, jump apex and walking landing");
+    Check(std::ranges::all_of(jumpFrames, [](bool shown) { return shown; }) && state.p[0].frame == 0,
+        "the full jump uses all poses and returns to the first walking frame");
     for (int tick = 0; tick < 5; ++tick) world.Update(keys);
     world.FillState(state);
     Check(state.p[0].y == 560, "holding up across landing must not trigger another jump");
     keys[0] = 0; world.Update(keys);
     keys[0] = UP; world.Update(keys); world.FillState(state);
-    Check(state.p[0].y == 535, "release and press starts a second jump with reset velocity");
+    Check(state.p[0].y == 535 && state.p[0].frame == 0, "a second jump resets velocity and the takeoff frame");
     keys[1] = UP; world.Update(keys); world.FillState(state);
     Check(state.p[0].y == 511 && state.p[1].y == 535, "players have independent jump velocities");
 
@@ -3025,6 +3045,7 @@ void JoinResultTest()
         SendBytes(second.value, reinterpret_cast<const char*>(&input), sizeof(input));
         const ULONGLONG deadline = GetTickCount64() + 20000;
         int winner = -1;
+        bool walkFrameReceived = false;
         while (winner < 0)
         {
             Check(GetTickCount64() < deadline, "the actual room loop completes the stage");
@@ -3045,10 +3066,12 @@ void JoinResultTest()
                 std::memcpy(&state, bytes.data(), sizeof(state));
                 Check(state.p[0].evil == (stage == 2 ? 1 : 0) && state.p[1].evil == 0,
                     "only the first-stage loser awakens in the actual second stage");
+                walkFrameReceived |= state.p[1].action == Action::Move && state.p[1].frame > 0;
             }
             else Check(header.type == PacketType::EVENT || header.type == PacketType::SCORE,
                 "stage frames contain state, events or scores before the result");
         }
+        Check(walkFrameReceived, "both TCP peers receive changing player frames from the room");
         if (stage == 1)
         {
             NextStagePacket ready;

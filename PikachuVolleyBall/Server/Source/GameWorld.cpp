@@ -42,6 +42,7 @@ void GameWorld::Reset(int stage, int serveSide)
         previousInputs_[i] = 0;
         playerInputs_[i] = PlayerInput{};
         velocityY_[i] = 0;
+        walkTicks_[i] = 0;
         slideCount_[i] = 0;
         slideDirection_[i] = 0;
     }
@@ -60,6 +61,7 @@ void GameWorld::Update(const std::uint8_t inputs[2])
     MovePlayers();
     JumpPlayers();
     SlidePlayers();
+    UpdatePlayerFrames(previousPlayers);
     UpdateBall(previousPlayers);
     CheckScore();
     ++state_.tick;
@@ -80,6 +82,38 @@ void GameWorld::SlidePlayers()
 {
     for (int i = 0; i < GameConst::PlayerCount; ++i)
         UpdatePlayerSlide(state_.p[i], i, slideCount_[i], slideDirection_[i]);
+}
+
+void GameWorld::UpdatePlayerFrames(const PlayerState (&previousPlayers)[GameConst::PlayerCount])
+{
+    constexpr std::array walkFrames{0, 1, 2, 3, 4, 3, 2, 1};
+    constexpr int ticksPerWalkFrame = 4;
+    constexpr int walkCycleTicks = static_cast<int>(walkFrames.size()) * ticksPerWalkFrame;
+    constexpr int jumpDurationTicks = 1 - 2 * GameConst::JumpPower / GameConst::JumpGravity;
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        PlayerState& player = state_.p[i];
+        const PlayerState& previous = previousPlayers[i];
+        if (player.action == Action::Move && player.x != previous.x)
+        {
+            player.frame = static_cast<std::uint16_t>(walkFrames[walkTicks_[i] / ticksPerWalkFrame]);
+            walkTicks_[i] = (walkTicks_[i] + 1) % walkCycleTicks;
+            continue;
+        }
+
+        walkTicks_[i] = 0;
+        if (player.action == Action::Jump)
+        {
+            // Velocity advances once per tick, so each jump starts its own frame sequence.
+            const int airborneTicks = (velocityY_[i] - GameConst::JumpPower) / GameConst::JumpGravity;
+            const int ticksToLand = jumpDurationTicks - airborneTicks;
+            if (airborneTicks <= 3) player.frame = 0;
+            else if (ticksToLand <= 8) player.frame = ticksToLand <= 5 ? 4 : 3;
+            else player.frame = static_cast<std::uint16_t>(1 + ((airborneTicks - 4) / 2) % 2);
+        }
+        else if (player.action == Action::Idle || player.action == Action::Move || player.action != previous.action)
+            player.frame = 0;
+    }
 }
 
 void GameWorld::MovePlayers()

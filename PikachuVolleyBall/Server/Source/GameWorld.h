@@ -1,4 +1,5 @@
 #pragma once
+#include "GameConst.h"
 #include "Protocol.h"
 #include "PlayerInput.h"
 #include <array>
@@ -35,11 +36,13 @@ private:
     void MovePlayers();
     void JumpPlayers();
     void SlidePlayers();
+    void UpdatePlayerFrames(const PlayerState (&previousPlayers)[GameConst::PlayerCount]);
     GameStatePacket state_{};
     std::vector<GameEvent> events_;
     std::uint8_t previousInputs_[2]{};
     std::array<PlayerInput, 2> playerInputs_{};
     int velocityY_[2]{};
+    int walkTicks_[2]{};
     int slideCount_[2]{};
     int slideDirection_[2]{};
     std::uint8_t scores_[2]{};
