@@ -1,10 +1,12 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "ConnectScreen.h"
+#include "ChatPanel.h"
 #include "GameClient.h"
 #include "GameState.h"
 #include "GameInput.h"
 #include "GameUpdate.h"
 #include "GameRenderer.h"
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <filesystem>
@@ -19,6 +21,7 @@
 namespace
 {
 ConnectScreen connectScreen;
+ChatPanel chatPanel;
 bool localGameStarted = false;
 GameClient gameClient;
 // Destroy the future before gameClient so the worker cannot outlive the network client.
@@ -49,6 +52,7 @@ void StopOnline(HWND window)
 {
 	KillTimer(window, joinTimer);
 	gameClient.Disconnect();
+	chatPanel.Reset(gameClient);
 	ShowConnectFields(window, true);
 	InvalidateRect(window, nullptr, FALSE);
 	pendingNetEvents.clear();
@@ -65,9 +69,14 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 	{
 	case NetEventResult::Waiting:
 		connectScreen.ShowWaiting(window, false);
+		chatPanel.Show(true);
 		break;
 	case NetEventResult::Matched:
 		connectScreen.ShowWaiting(window, true);
+		chatPanel.Show(true);
+		break;
+	case NetEventResult::ChatReceived:
+		chatPanel.Refresh(gameClient);
 		break;
 	case NetEventResult::ScoreUpdated:
 		InvalidateRect(window, nullptr, FALSE);
@@ -81,6 +90,8 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 			return false;
 		}
 		ShowConnectFields(window, false);
+		chatPanel.Cancel(gameClient);
+		chatPanel.Show(true);
 		SetFocus(window);
 		InvalidateRect(window, nullptr, FALSE);
 		break;
@@ -229,10 +240,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 	while ((result = GetMessage(&Message, 0, 0, 0)) > 0) {
 		if (!localGameStarted)
 		{
+			if (!joinAttempt.valid() && chatPanel.HandleMessage(Message, gameClient)) continue;
 			// OnKey sends gameplay input only in Playing; form navigation stays with the dialog.
-			if (!joinAttempt.valid() && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
+			if (!joinAttempt.valid() && GetFocus() == hWnd && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
 				gameClient.OnKey(Message.message, Message.wParam);
-			if (gameClient.GetScene() != Scene::Playing && Message.message != WM_NET_EVENT &&
+			// Let the edit control and IME finish composition instead of dialog Enter navigation.
+			if (GetFocus() != GetDlgItem(hWnd, ChatPanel::Input) &&
+				(gameClient.GetScene() != Scene::Playing || gameClient.IsChatting()) && Message.message != WM_NET_EVENT &&
 				IsDialogMessageW(hWnd, &Message)) continue;
 		}
 		TranslateMessage(&Message);
@@ -262,6 +276,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			if (joinAttempt.valid()) joinAttempt.wait();
 			StopOnline(hWnd);
 			connectScreen.Destroy(hWnd);
+			chatPanel.Destroy();
 		}
 		KillTimer(hWnd, 2);
 		KillTimer(hWnd, GameConst::FrameTimerId);
@@ -276,6 +291,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		{
 		case WM_CREATE:
 			if (!connectScreen.Create(hWnd, g_hInst)) return -1;
+			if (!chatPanel.Create(hWnd, g_hInst)) return -1;
 			gameClient.SetWindow(hWnd);
 			return 0;
 		case WM_GETMINMAXINFO:
@@ -283,6 +299,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			return 0;
 		case WM_SIZE:
 			connectScreen.Layout(hWnd);
+			chatPanel.Layout();
 			return 0;
 		case WM_ERASEBKGND:
 			return TRUE;
@@ -291,12 +308,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			{
 				PAINTSTRUCT paint{};
 				BeginPaint(hWnd, &paint);
+				RECT strip{};
+				GetClientRect(hWnd, &strip);
+				strip.top = (std::max)(0L, strip.bottom - GameConst::ChatPanelHeight);
+				FillRect(paint.hdc, &strip, GetSysColorBrush(COLOR_BTNFACE));
 				EndPaint(hWnd, &paint);
 				gameClient.OnTimer();
 			}
 			else connectScreen.Paint(hWnd);
 			return 0;
 		case WM_CTLCOLORSTATIC:
+			if (GetDlgCtrlID(reinterpret_cast<HWND>(lParam)) == ChatPanel::Hint)
+			{
+				SetBkMode(reinterpret_cast<HDC>(wParam), TRANSPARENT);
+				return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+			}
 			return reinterpret_cast<LRESULT>(connectScreen.PaintLabel(reinterpret_cast<HDC>(wParam)));
 		case WM_DRAWITEM:
 			connectScreen.PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
@@ -322,6 +348,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 				CheckJoin(hWnd);
 			return 0;
 		case WM_COMMAND:
+			if (chatPanel.HandleCommand(wParam, gameClient)) return 0;
 			if (HIWORD(wParam) != BN_CLICKED) return 0;
 			if ((LOWORD(wParam) == ConnectScreen::LeaveButton || LOWORD(wParam) == IDCANCEL) &&
 				gameClient.GetScene() == Scene::Waiting && !joinAttempt.valid())
@@ -340,6 +367,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 				StopOnline(hWnd);
 				localGameStarted = true;
 				connectScreen.Destroy(hWnd);
+				chatPanel.Destroy();
 				SetFocus(hWnd);
 				InitializeGame(hWnd);
 				InvalidateRect(hWnd, nullptr, TRUE);

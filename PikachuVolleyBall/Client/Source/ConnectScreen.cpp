@@ -12,12 +12,12 @@ constexpr COLORREF ink = RGB(24, 42, 69);
 constexpr COLORREF paper = RGB(255, 252, 237);
 constexpr COLORREF gold = RGB(255, 212, 72);
 
-RECT PanelRect(HWND window)
+RECT PanelRect(HWND window, bool waiting)
 {
     RECT client{};
     GetClientRect(window, &client);
     const int x = (client.right - panelWidth) / 2;
-    const int y = (client.bottom - panelHeight) / 2;
+    const int y = (client.bottom - panelHeight - (waiting ? GameConst::ChatPanelHeight : 0)) / 2;
     return {x, y, x + panelWidth, y + panelHeight};
 }
 
@@ -55,7 +55,7 @@ void DrawBackdrop(HDC dc, HDC sprites, const RECT& client, const RECT& panel)
 
 void ConnectScreen::LimitWindowSize(HWND window, MINMAXINFO& limits) const
 {
-    RECT minimum{0, 0, panelWidth + 32, panelHeight + 32};
+    RECT minimum{0, 0, panelWidth + 32, panelHeight + 32 + (waiting_ ? GameConst::ChatPanelHeight : 0)};
     AdjustWindowRectEx(&minimum, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE)),
         FALSE, static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE)));
     limits.ptMinTrackSize.x = std::max(limits.ptMinTrackSize.x, minimum.right - minimum.left);
@@ -110,7 +110,7 @@ bool ConnectScreen::Create(HWND window, HINSTANCE instance)
 
 void ConnectScreen::Layout(HWND window) const
 {
-    const RECT panel = PanelRect(window);
+    const RECT panel = PanelRect(window, waiting_);
     const int x = panel.left + padding;
     constexpr int width = panelWidth - 2 * padding;
     const auto move = [&](Control id, int y, int height)
@@ -147,7 +147,7 @@ void ConnectScreen::ShowConnect(HWND window)
     Hide(window);
     for (int id = IpLabel; id <= Status; ++id)
         ShowWindow(GetDlgItem(window, id), SW_SHOW);
-    InvalidateRect(window, nullptr, FALSE);
+    Layout(window);
 }
 
 void ConnectScreen::ShowWaiting(HWND window, bool matched)
@@ -168,11 +168,18 @@ void ConnectScreen::ShowWaiting(HWND window, bool matched)
         : L"상대 입장 후 자동으로 시작됩니다.");
     const bool entering = !waiting_;
     waiting_ = true;
+    RECT client{}, bounds{};
+    GetClientRect(window, &client);
+    GetWindowRect(window, &bounds);
+    const int minimumHeight = panelHeight + 32 + GameConst::ChatPanelHeight;
+    if (client.bottom < minimumHeight)
+        SetWindowPos(window, nullptr, 0, 0, bounds.right - bounds.left,
+            bounds.bottom - bounds.top + minimumHeight - client.bottom, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     Hide(window);
     for (int id = WaitingTitle; id <= LeaveButton; ++id)
         ShowWindow(GetDlgItem(window, id), SW_SHOW);
     if (entering) SetFocus(window);
-    InvalidateRect(window, nullptr, FALSE);
+    Layout(window);
 }
 
 void ConnectScreen::Paint(HWND window) const
@@ -181,7 +188,7 @@ void ConnectScreen::Paint(HWND window) const
     const HDC dc = BeginPaint(window, &paint);
     RECT client{};
     GetClientRect(window, &client);
-    const RECT panel = PanelRect(window);
+    const RECT panel = PanelRect(window, waiting_);
     const HDC sprites = sprites_ ? CreateCompatibleDC(dc) : nullptr;
     const HGDIOBJ original = sprites ? SelectObject(sprites, sprites_) : nullptr;
     DrawBackdrop(dc, original ? sprites : nullptr, client, panel);

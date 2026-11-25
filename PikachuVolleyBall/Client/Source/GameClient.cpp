@@ -2,6 +2,21 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <cwctype>
+
+namespace
+{
+bool DecodeText(const char* text, int capacity, std::wstring& out)
+{
+    int length = 0;
+    while (length < capacity && text[length] != '\0') ++length;
+    if (length == 0 || length == capacity) return false;
+    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, length, nullptr, 0);
+    if (!count) return false;
+    out.resize(count);
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, length, out.data(), count) == count;
+}
+}
 
 GameClient::~GameClient()
 {
@@ -41,6 +56,7 @@ JoinRequestResult GameClient::ConnectAndJoin(const wchar_t* address, const wchar
         return JoinRequestResult::SendFailed;
     }
     input_.Reset();
+    joinedNickname_ = nickname;
     return JoinRequestResult::Sent;
 }
 
@@ -51,6 +67,10 @@ void GameClient::Disconnect()
     network_.Disconnect();
     ChangeScene(Scene::Connect);
     scores_.fill(0);
+    EndChat();
+    chatHistory_.clear();
+    nicknames_.fill({});
+    joinedNickname_.clear();
 }
 
 void GameClient::ChangeScene(Scene scene)
@@ -59,13 +79,13 @@ void GameClient::ChangeScene(Scene scene)
 
     if (scene != Scene::Playing) StopRendering();
     ReleaseInput();
+    EndChat();
     scene_ = scene;
 }
 
 void GameClient::OnKey(UINT msg, WPARAM key)
 {
-    // Form navigation and future chat/stage controls must not become INPUT packets.
-    if (scene_ != Scene::Playing || !network_.IsConnected()) return;
+    if (chatting_ || scene_ != Scene::Playing || !network_.IsConnected()) return;
 
     bool changed = false;
     switch (msg)
@@ -81,6 +101,34 @@ void GameClient::ReleaseInput()
     if (input_.GetKeys() == 0) return;
     input_.Reset();
     if (network_.IsConnected()) network_.SendInput(0);
+}
+
+bool GameClient::BeginChat()
+{
+    if (scene_ == Scene::Connect || !network_.IsConnected()) return false;
+    ReleaseInput();
+    chatting_ = true;
+    return true;
+}
+
+ChatSendResult GameClient::SendChat(const wchar_t* text)
+{
+    if (scene_ == Scene::Connect || !network_.IsConnected()) return ChatSendResult::NotInRoom;
+    if (!text || !*text) return ChatSendResult::Empty;
+    bool blank = true;
+    for (const wchar_t* cursor = text; *cursor; ++cursor)
+    {
+        if (*cursor < L' ') return ChatSendResult::InvalidText;
+        if (!std::iswspace(*cursor)) blank = false;
+    }
+    if (blank) return ChatSendResult::Empty;
+    const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, nullptr, 0, nullptr, nullptr);
+    if (bytes == 0) return ChatSendResult::InvalidText;
+    if (bytes > MAX_CHAT) return ChatSendResult::TooLong;
+    char utf8[MAX_CHAT]{};
+    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, -1, utf8, MAX_CHAT, nullptr, nullptr))
+        return ChatSendResult::InvalidText;
+    return network_.SendChat(utf8) ? ChatSendResult::Sent : ChatSendResult::SendFailed;
 }
 
 NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
@@ -101,6 +149,12 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         case JoinResult::Waiting:
         case JoinResult::Matched:
             if (reply.myIndex >= GameConst::PlayerCount) break;
+            if (scene_ == Scene::Connect)
+            {
+                chatHistory_.clear();
+                nicknames_.fill({});
+                nicknames_[reply.myIndex] = joinedNickname_;
+            }
             ChangeScene(Scene::Waiting);
             return reply.result == JoinResult::Waiting ? NetEventResult::Waiting : NetEventResult::Matched;
         case JoinResult::Full:
@@ -119,6 +173,11 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         if (start.stage == 0 || start.stage > GameConst::StageCount || start.serveSide >= GameConst::PlayerCount)
             break;
         scores_.fill(0);
+        for (int i = 0; i < GameConst::PlayerCount; ++i)
+        {
+            std::wstring nickname;
+            if (DecodeText(start.nick[i], MAX_NICK, nickname)) nicknames_[i] = std::move(nickname);
+        }
         ChangeScene(Scene::Playing);
         return NetEventResult::GameStarted;
     }
@@ -134,6 +193,21 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         // The server sends both totals. Copy them rather than counting received notifications.
         std::copy_n(score.score, scores_.size(), scores_.begin());
         return NetEventResult::ScoreUpdated;
+    }
+    case static_cast<WPARAM>(PacketType::CHAT):
+    {
+        if (scene_ == Scene::Connect) break;
+        ChatPacket chat;
+        std::memcpy(&chat, data, sizeof(chat));
+        std::wstring message;
+        if (chat.sender >= GameConst::PlayerCount || !DecodeText(chat.msg, MAX_CHAT, message) ||
+            std::any_of(message.begin(), message.end(), [](wchar_t ch) { return ch < L' '; }))
+            break;
+        const std::wstring name = nicknames_[chat.sender].empty()
+            ? L"플레이어 " + std::to_wstring(chat.sender + 1) : nicknames_[chat.sender];
+        if (chatHistory_.size() == 100) chatHistory_.pop_front();
+        chatHistory_.push_back(name + L": " + message);
+        return NetEventResult::ChatReceived;
     }
     }
     return NetEventResult::Ignored;
@@ -164,6 +238,6 @@ bool GameClient::OnTimer()
     if (!renderWindow_ || scene_ != Scene::Playing || !network_.IsConnected()) return false;
     GameStatePacket state;
     if (!network_.GetLatestState(state)) return false;
-    renderer_.Render(state, scores_);
+    renderer_.Render(state, scores_, GameConst::ChatPanelHeight);
     return true;
 }

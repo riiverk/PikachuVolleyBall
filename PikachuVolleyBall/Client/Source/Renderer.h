@@ -12,7 +12,7 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     bool Initialize(HWND window);
-    void Render(const GameStatePacket& state, std::array<std::uint8_t, GameConst::PlayerCount> scores = {});
+    void Render(const GameStatePacket& state, std::array<std::uint8_t, GameConst::PlayerCount> scores = {}, int bottomInset = 0);
     void Shutdown();
 
 private:

@@ -155,6 +155,8 @@
     <ClCompile Include="..\Client\Source\NetworkClient.cpp" />
     <ClCompile Include="..\Client\Source\InputManager.cpp" />
     <ClCompile Include="..\Client\Source\GameClient.cpp" />
+    <ClCompile Include="..\Client\Source\ChatPanel.cpp" />
+    <ClCompile Include="..\Client\Source\ConnectScreen.cpp" />
     <ClCompile Include="..\Client\Source\Renderer.cpp" />
   </ItemGroup>
   <ItemGroup>

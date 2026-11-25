@@ -6,6 +6,8 @@
 #include "../../Server/Source/PlayerMovement.h"
 #include "../../Server/Source/BallPhysics.h"
 #include "../../Client/Source/GameClient.h"
+#include "../../Client/Source/ChatPanel.h"
+#include "../../Client/Source/ConnectScreen.h"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -13,6 +15,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -410,6 +413,14 @@ void GameClientInputTest()
     client.OnKey(WM_KEYUP, VK_RIGHT);
 
     std::vector<std::uint8_t> expected{LEFT, LEFT | ACTION, ACTION, 0, RIGHT, 0};
+    client.OnKey(WM_KEYDOWN, VK_RIGHT);
+    Check(client.BeginChat() && client.IsChatting(), "opening chat releases game input");
+    client.OnKey(WM_KEYDOWN, VK_LEFT);
+    client.OnKey(WM_KEYDOWN, VK_UP);
+    client.OnKey(WM_KEYDOWN, 'Z');
+    client.EndChat();
+    client.OnKey(WM_KEYUP, VK_RIGHT);
+    expected.insert(expected.end(), {RIGHT, 0});
     for (const Scene scene : {Scene::Connect, Scene::Waiting, Scene::StageOver, Scene::Result})
     {
         client.OnKey(WM_KEYDOWN, VK_RIGHT);
@@ -1936,6 +1947,240 @@ void GameClientTimerTest()
     std::cout << "PASS: SCORE updates both rendered totals without double counting, validates and resets between stages/connections\n";
 }
 
+struct HiddenChatPlayer
+{
+    HWND window = CreateWindowExW(0, L"STATIC", nullptr, WS_POPUP | WS_CLIPCHILDREN,
+        0, 0, GameConst::WindowWidth, GameConst::WindowHeight, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    GameClient client;
+    ChatPanel panel;
+    HiddenChatPlayer()
+    {
+        Check(window != nullptr && panel.Create(window, GetModuleHandleW(nullptr)), "create hidden native chat controls");
+        client.SetWindow(window);
+    }
+    ~HiddenChatPlayer()
+    {
+        client.Disconnect();
+        panel.Destroy();
+        MSG message{};
+        while (PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_REMOVE))
+            delete[] reinterpret_cast<char*>(message.lParam);
+        DestroyWindow(window);
+    }
+    NetEventResult Receive(PacketType expected)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            MSG message{};
+            if (!PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_REMOVE))
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                continue;
+            }
+            const std::unique_ptr<char[]> packet(reinterpret_cast<char*>(message.lParam));
+            const auto result = client.OnNetEvent(message.wParam, message.lParam);
+            if (result == NetEventResult::ChatReceived) panel.Refresh(client);
+            if (message.wParam == static_cast<WPARAM>(expected)) return result;
+        }
+        Check(false, "receive the expected chat/room window event");
+        return NetEventResult::Ignored;
+    }
+    void Key(WPARAM key, bool inEdit = false)
+    {
+        MSG message{};
+        message.hwnd = inEdit ? GetDlgItem(window, ChatPanel::Input) : window;
+        message.message = WM_KEYDOWN;
+        message.wParam = key;
+        Check(panel.HandleMessage(message, client), "chat panel handles its keyboard command");
+    }
+};
+
+void ChatPanelLayoutTest()
+{
+    HiddenChatPlayer player;
+    ConnectScreen screen;
+    Check(screen.Create(player.window, GetModuleHandleW(nullptr)), "create hidden connection and waiting forms");
+    SetDlgItemTextW(player.window, ConnectScreen::RoomNumber, L"22");
+    SetDlgItemTextW(player.window, ConnectScreen::Nickname, L"테스트");
+    for (const auto size : {std::pair{1160, 830}, std::pair{446, 692}, std::pair{800, 760}})
+    {
+        MoveWindow(player.window, 0, 0, size.first, size.second, FALSE);
+        screen.ShowWaiting(player.window, false);
+        player.panel.Show(true);
+        screen.Layout(player.window);
+        player.panel.Layout();
+        RECT button{}, history{}, input{}, bounds{};
+        GetWindowRect(GetDlgItem(player.window, ConnectScreen::LeaveButton), &button);
+        GetWindowRect(GetDlgItem(player.window, ChatPanel::History), &history);
+        GetWindowRect(GetDlgItem(player.window, ChatPanel::Input), &input);
+        GetWindowRect(player.window, &bounds);
+        Check(button.bottom <= history.top && history.bottom < input.top && input.bottom <= bounds.bottom &&
+            history.left >= bounds.left && input.right <= bounds.right,
+            "chat controls stay inside the hidden window and below the waiting screen at all supported sizes");
+        Check(!IsWindowVisible(player.window), "layout verification never displays a window");
+    }
+    screen.Destroy(player.window);
+    std::cout << "PASS: hidden native chat controls fit the waiting screen at normal and minimum window sizes\n";
+}
+
+void ChatSendTest()
+{
+    Listener listener;
+    NetworkClient client;
+    Check(!client.SendChat("offline") && client.GetLastError() == WSAENOTCONN, "chat requires a connection");
+    Check(client.Connect("127.0.0.1", listener.port), "connect chat sender");
+    Socket peer; peer.value = listener.Accept();
+    const DWORD timeout = 2000;
+    setsockopt(peer.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    const std::string ascii(63, 'a'), tooLong(64, 'a');
+    std::string korean;
+    for (int i = 0; i < 21; ++i) korean += "가";
+    const char invalidUtf8[] = {static_cast<char>(0xff), '\0'};
+    for (const char* invalid : {static_cast<const char*>(nullptr), "", tooLong.c_str(), invalidUtf8})
+        Check(!client.SendChat(invalid) && client.GetLastError() == WSAEINVAL, "reject empty, oversized and invalid UTF-8 chat");
+    for (const auto& text : {ascii, korean})
+    {
+        Check(client.SendChat(text.c_str()), "accept exactly 63 UTF-8 bytes");
+        ChatPacket packet;
+        Check(recvn(peer.value, reinterpret_cast<char*>(&packet), sizeof(packet)) == sizeof(packet) &&
+            packet.type == PacketType::CHAT && packet.sender == NO_PLAYER &&
+            std::strcmp(packet.msg, text.c_str()) == 0 && packet.msg[MAX_CHAT - 1] == '\0',
+            "send a whole, terminated chat frame without claiming a player identity");
+    }
+    client.Disconnect();
+    char tail;
+    Check(recv(peer.value, &tail, 1, 0) == 0, "invalid messages never reach the wire");
+    std::cout << "PASS: CHAT framing, UTF-8 63-byte boundaries, rejection and disconnected sending\n";
+}
+
+void RoomChatTest()
+{
+    Room room(1), otherRoom(2);
+    Stream first, second, outside;
+    ClientSession player0(std::exchange(first.receiver.value, INVALID_SOCKET));
+    ClientSession player1(std::exchange(second.receiver.value, INVALID_SOCKET));
+    ClientSession other(std::exchange(outside.receiver.value, INVALID_SOCKET));
+    room.AddPlayer(&player0); room.AddPlayer(&player1); otherRoom.AddPlayer(&other);
+    RoomTestAccess::Bind(player0, room, 0); RoomTestAccess::Bind(player1, room, 1);
+    RoomTestAccess::Bind(other, otherRoom, 0);
+    const DWORD timeout = 2000;
+    for (Stream* stream : {&first, &second, &outside})
+        setsockopt(stream->sender.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    for (const int sender : {0, 1})
+    {
+        ChatPacket forged; forged.sender = static_cast<std::uint8_t>(1 - sender);
+        std::memcpy(forged.msg, "hello", 6);
+        (sender == 0 ? player0 : player1).ProcessPacket(reinterpret_cast<char*>(&forged));
+        for (Stream* stream : {&first, &second})
+        {
+            ChatPacket received;
+            Check(recvn(stream->sender.value, reinterpret_cast<char*>(&received), sizeof(received)) == sizeof(received) &&
+                received.sender == sender && std::strcmp(received.msg, "hello") == 0,
+                "room chat echoes to both players with the actual session's sender index");
+        }
+    }
+    ChatPacket invalid;
+    std::memset(invalid.msg, 'a', sizeof(invalid.msg));
+    player0.ProcessPacket(reinterpret_cast<char*>(&invalid));
+    invalid.msg[0] = '\0'; player0.ProcessPacket(reinterpret_cast<char*>(&invalid));
+    invalid.msg[0] = static_cast<char>(0xff); invalid.msg[1] = '\0';
+    player0.ProcessPacket(reinterpret_cast<char*>(&invalid));
+    room.OnChat(-1, "bad"); room.OnChat(2, "bad"); room.OnChat(0, nullptr);
+    room.OnPlayerLeave(1); room.OnChat(1, "departed");
+    for (Stream* stream : {&first, &second, &outside})
+    {
+        fd_set readSet;
+        FD_ZERO(&readSet); FD_SET(stream->sender.value, &readSet);
+        const timeval immediate{};
+        Check(select(0, &readSet, nullptr, nullptr, &immediate) == 0,
+            "other rooms, malformed messages and departed senders receive no chat traffic");
+    }
+    std::cout << "PASS: room-only chat, sender spoof prevention, malformed frames and departed senders\n";
+}
+
+void GameClientChatTest()
+{
+    HiddenChatPlayer first, second, outside;
+    Server server;
+    Check(server.InitServer(0), "start the real server for end-to-end chat");
+    AcceptRunner running(server);
+    const auto join = [&](HiddenChatPlayer& player, const wchar_t* room, const wchar_t* name)
+    {
+        Check(player.client.ConnectAndJoin(L"127.0.0.1", room, name, server.GetPort()) == JoinRequestResult::Sent,
+            "join a real room for chat");
+        player.panel.Show(true);
+    };
+    join(first, L"22", L"경준");
+    Check(first.Receive(PacketType::JOIN_RESULT) == NetEventResult::Waiting, "first chat player waits alone");
+    first.Key(VK_RETURN);
+    SetDlgItemTextW(first.window, ChatPanel::Input, L"대기 중 채팅");
+    first.Key(VK_RETURN, true);
+    Check(first.Receive(PacketType::CHAT) == NetEventResult::ChatReceived &&
+        first.client.GetChatHistory().back() == L"경준: 대기 중 채팅", "chat works in a waiting room with the user's nickname");
+
+    join(outside, L"23", L"other");
+    Check(outside.Receive(PacketType::JOIN_RESULT) == NetEventResult::Waiting, "another room stays separate");
+    join(second, L"22", L"peer");
+    Check(second.Receive(PacketType::JOIN_RESULT) == NetEventResult::Matched &&
+        first.Receive(PacketType::JOIN_RESULT) == NetEventResult::Matched, "chat players match in the same room");
+    Check(first.Receive(PacketType::GAME_START) == NetEventResult::GameStarted &&
+        second.Receive(PacketType::GAME_START) == NetEventResult::GameStarted, "game start keeps the waiting-room chat history");
+    first.Key(VK_RETURN);
+    SetDlgItemTextW(first.window, ChatPanel::Input, L"안녕하세요 Z ←");
+    first.client.OnKey(WM_KEYDOWN, 'Z'); first.client.OnKey(WM_KEYDOWN, VK_LEFT);
+    first.Key(VK_RETURN, true);
+    Check(!first.client.IsChatting() && GetWindowTextLengthW(GetDlgItem(first.window, ChatPanel::Input)) == 0,
+        "Enter sends a message and closes/clears the editor");
+    for (HiddenChatPlayer* player : {&first, &second})
+    {
+        Check(player->Receive(PacketType::CHAT) == NetEventResult::ChatReceived &&
+            player->client.GetChatHistory().back() == L"경준: 안녕하세요 Z ←", "both clients receive the same Korean chat line");
+        wchar_t history[512]{};
+        GetDlgItemTextW(player->window, ChatPanel::History, history, ARRAYSIZE(history));
+        Check(std::wstring(history).find(L"경준: 안녕하세요 Z ←") != std::wstring::npos,
+            "the real native history control displays the received text");
+    }
+    Check(first.client.GetChatHistory().size() == 2, "the sender waits for the server echo instead of displaying twice");
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    Check(!HasNetEvent(outside.window) && outside.client.GetChatHistory().empty(), "chat never leaks into another room");
+
+    first.Key(VK_RETURN);
+    const std::wstring oversized(22, L'가');
+    SetDlgItemTextW(first.window, ChatPanel::Input, oversized.c_str());
+    first.Key(VK_RETURN, true);
+    Check(first.client.IsChatting() && GetWindowTextLengthW(GetDlgItem(first.window, ChatPanel::Input)) == 22,
+        "an oversized Korean message stays editable without truncation");
+    first.Key(VK_ESCAPE, true);
+    Check(!first.client.IsChatting() && GetWindowTextLengthW(GetDlgItem(first.window, ChatPanel::Input)) == 0,
+        "Esc cancels chat without sending it");
+    Check(first.client.SendChat(L"   ") == ChatSendResult::Empty &&
+        first.client.SendChat(L"line\nbreak") == ChatSendResult::InvalidText,
+        "blank and multiline messages are rejected locally");
+    const wchar_t badSurrogate[] = {static_cast<wchar_t>(0xd800), L'\0'};
+    Check(first.client.SendChat(badSurrogate) == ChatSendResult::InvalidText, "invalid UTF-16 is rejected");
+    SetDlgItemTextW(second.window, ChatPanel::Input, L"버튼 전송");
+    Check(second.panel.HandleCommand(MAKEWPARAM(ChatPanel::SendButton, BN_CLICKED), second.client), "send button submits chat");
+    for (HiddenChatPlayer* player : {&first, &second})
+        Check(player->Receive(PacketType::CHAT) == NetEventResult::ChatReceived &&
+            player->client.GetChatHistory().back() == L"peer: 버튼 전송", "the other player's nickname and button message are preserved");
+
+    ChatPacket packet; packet.sender = 0; std::memcpy(packet.msg, "bounded", 8);
+    for (int i = 0; i < 105; ++i)
+        first.client.OnNetEvent(static_cast<WPARAM>(PacketType::CHAT), reinterpret_cast<LPARAM>(&packet));
+    Check(first.client.GetChatHistory().size() == 100, "chat history is bounded to its most recent 100 lines");
+    packet.sender = NO_PLAYER;
+    Check(first.client.OnNetEvent(static_cast<WPARAM>(PacketType::CHAT), reinterpret_cast<LPARAM>(&packet)) == NetEventResult::Ignored,
+        "a malformed server sender does not enter chat history");
+    first.client.Disconnect(); first.panel.Reset(first.client);
+    Check(first.client.GetChatHistory().empty() && !first.client.IsChatting() &&
+        GetWindowTextLengthW(GetDlgItem(first.window, ChatPanel::History)) == 0,
+        "leaving a room clears both the model and native chat controls");
+    Check(!IsWindowVisible(first.window) && !IsWindowVisible(second.window) && !IsWindowVisible(outside.window),
+        "end-to-end chat verification never shows a window");
+    std::cout << "PASS: hidden end-to-end waiting/game chat, Korean input, native history, Enter/Esc/button, byte limits and reset\n";
+}
+
 void GameClientNetEventTest()
 {
     struct Player
@@ -2923,6 +3168,7 @@ int main()
         GameWorldScoreTest();
         GameWorldEventsTest();
         GameClientSceneTest(); RendererInitializationTest(); RendererFrameTest();
+        ChatPanelLayoutTest();
         ServerConnectTest(); ServerAcceptTest();
     }
     catch (const std::exception& error)
@@ -2935,6 +3181,7 @@ int main()
     int code = 0;
     try
     {
+        ChatSendTest(); RoomChatTest(); GameClientChatTest();
         SessionDisconnectTest();
         RoomQuitTest();
         RoomQuitSuppressionTest();

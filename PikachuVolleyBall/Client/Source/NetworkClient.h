@@ -17,7 +17,7 @@ public:
     static DWORD WINAPI RecvThread(LPVOID arg);
     void ProcessPacket(char* buf);
     void SendInput(std::uint8_t keys);
-    void SendChat(const char* msg);
+    bool SendChat(const char* msg);
     void SendNextStage();
     // False until this connection has received its first GAME_STATE.
     bool GetLatestState(GameStatePacket& out);

@@ -1,6 +1,7 @@
 ﻿#include "Room.h"
 
 #include "ClientSession.h"
+#include <cstring>
 
 Room::Room(int roomNo) : roomNo_(roomNo) { InitializeCriticalSection(&csInput_); }
 Room::~Room()
@@ -350,4 +351,30 @@ void Room::EndByQuit()
         GameOverReason::Normal : GameOverReason::Quit;
     BroadcastGameOver(static_cast<std::uint8_t>(reason));
 }
-void Room::OnChat(int, const char*) { /* TODO 11/24 */ }
+void Room::OnChat(int idx, const char* msg)
+{
+    if (idx < 0 || idx >= GameConst::PlayerCount || !msg) return;
+    int length = 0;
+    while (length < MAX_CHAT && msg[length] != '\0') ++length;
+    if (length == 0 || length == MAX_CHAT ||
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, msg, length, nullptr, 0) == 0)
+        return;
+
+    ClientSession* recipients[GameConst::PlayerCount]{};
+    EnterCriticalSection(&csInput_);
+    if (players_[idx] == nullptr || left[idx])
+    {
+        LeaveCriticalSection(&csInput_);
+        return;
+    }
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+        if (!left[i]) recipients[i] = players_[i];
+    LeaveCriticalSection(&csInput_);
+
+    ChatPacket packet;
+    packet.sender = static_cast<std::uint8_t>(idx);
+    std::memcpy(packet.msg, msg, length);
+    // Do not hold the room lock during send: send failure can report a departure.
+    for (ClientSession* recipient : recipients)
+        if (recipient) recipient->SendPacket(reinterpret_cast<const char*>(&packet), sizeof(packet));
+}

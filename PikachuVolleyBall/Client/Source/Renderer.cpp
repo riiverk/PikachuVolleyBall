@@ -231,11 +231,13 @@ void Renderer::DrawPlayer(const PlayerState& player, int side)
     }
 }
 
-void Renderer::Render(const GameStatePacket& state, std::array<std::uint8_t, GameConst::PlayerCount> scores)
+void Renderer::Render(const GameStatePacket& state, std::array<std::uint8_t, GameConst::PlayerCount> scores, int bottomInset)
 {
     if (!window_) return;
     RECT client{};
     if (!GetClientRect(window_, &client) || client.right <= 0 || client.bottom <= 0) return;
+    client.bottom -= std::clamp(bottomInset, 0, static_cast<int>(client.bottom));
+    if (client.bottom <= 0) return;
 
     DrawCourt(backBufferDC_, spriteDC_, state.tick);
     for (int side = 0; side < GameConst::PlayerCount; ++side)

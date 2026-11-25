@@ -6,6 +6,7 @@ namespace GameConst
 {
 inline constexpr int WindowWidth = 1160;
 inline constexpr int WindowHeight = 830;
+inline constexpr int ChatPanelHeight = 176;
 inline constexpr int TickMs = 16;
 inline constexpr float TickSeconds = TickMs / 1000.0f;
 inline constexpr int PlayerCount = 2;

@@ -239,7 +239,27 @@ void NetworkClient::SendInput(std::uint8_t keys)
     packet.keys = keys;
     if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) SetError(0);
 }
-void NetworkClient::SendChat(const char*) { /* TODO 11/23 */ }
+bool NetworkClient::SendChat(const char* msg)
+{
+    if (!IsConnected())
+    {
+        SetError(WSAENOTCONN);
+        return false;
+    }
+    int length = 0;
+    if (msg) while (length < MAX_CHAT && msg[length] != '\0') ++length;
+    if (!msg || length == 0 || length == MAX_CHAT ||
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, msg, length, nullptr, 0) == 0)
+    {
+        SetError(WSAEINVAL);
+        return false;
+    }
+    ChatPacket packet;
+    std::memcpy(packet.msg, msg, length);
+    if (!SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) return false;
+    SetError(0);
+    return true;
+}
 void NetworkClient::SendNextStage() { /* TODO 11/26 */ }
 bool NetworkClient::GetLatestState(GameStatePacket& out)
 {
