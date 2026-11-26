@@ -121,30 +121,6 @@ bool RoomManager::RemoveIfEmpty(Room* room)
     return true;
 }
 
-bool RoomManager::RemoveIfWaiting(Room* room)
-{
-    if (room == nullptr) return false;
-
-    Room* removed = nullptr;
-    EnterCriticalSection(&csRooms_);
-    for (int i = 0; i < roomCount_; ++i)
-    {
-        if (rooms_[i] != room) continue;
-        if (room->GetPlayer(1) != nullptr) break;
-        removed = rooms_[i];
-        rooms_[i] = rooms_[roomCount_ - 1];
-        roomNos_[i] = roomNos_[roomCount_ - 1];
-        rooms_[roomCount_ - 1] = nullptr;
-        --roomCount_;
-        break;
-    }
-    LeaveCriticalSection(&csRooms_);
-    if (removed == nullptr) return false;
-    delete removed;
-    std::printf("[rooms] removed waiting room\n");
-    return true;
-}
-
 std::size_t RoomManager::GetRoomCount() const
 {
     EnterCriticalSection(&csRooms_);

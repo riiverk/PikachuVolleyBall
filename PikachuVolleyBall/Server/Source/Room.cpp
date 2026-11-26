@@ -53,7 +53,7 @@ void Room::Start()
     thread_ = CreateThread(nullptr, 0, RoomThread, this, 0, nullptr);
     if (thread_ == nullptr)
     {
-        std::printf("[room] CreateThread failed: %lu\n", GetLastError());
+        std::printf("[room %d] CreateThread failed: %lu\n", roomNo_, GetLastError());
         return;
     }
   
@@ -97,7 +97,7 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
         }
         room->stage_ = stage;
         room->world_.Reset(stage, serve);
-		std::printf("[room %d] stage %d start, serve = %d\n", room->roomNo_, stage, serve + 1);
+		std::printf("[room %d] stage %d start, serve = %dP\n", room->roomNo_, stage, serve + 1);
         room->BroadcastGameStart(stage, serve);
         room->nextTick_ = GetTickCount64();
 
@@ -116,13 +116,12 @@ DWORD WINAPI Room::RoomThread(LPVOID arg)
         }
 
         const int winner = 1 - room->world_.GetLoser();
-		std::printf("[room %d] stage %d over, winner = %d\n", room->roomNo_, stage, winner + 1);
+		std::printf("[room %d] stage %d over, winner = %dP\n", room->roomNo_, stage, winner + 1);
         room->BroadcastStageOver();
 
         if (stage == GameConst::StageCount)
         {
-			std::printf("[room %d] game over, winner = %d\n", room->roomNo_, winner + 1);
-            room->BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Normal));
+			room->BroadcastGameOver(static_cast<std::uint8_t>(GameOverReason::Normal));
             break;
         }
 
@@ -204,6 +203,7 @@ void Room::BroadcastEvents()
             score.score[0] = event.score[0];
             score.score[1] = event.score[1];
             Broadcast(reinterpret_cast<const char*>(&score), sizeof(score));
+            std::printf("[room %d] score %dP, %d:%d\n", roomNo_, event.who + 1, event.score[0], event.score[1]);
         }
     }
 }
@@ -256,6 +256,9 @@ void Room::BroadcastGameOver(std::uint8_t reason)
     }
     gameOverSent_ = true;
     LeaveCriticalSection(&csInput_);
+
+	std::printf("[room %d] game over, winner = %dP (%s)\n", roomNo_, packet.winner + 1,
+        packet.reason == GameOverReason::Quit ? "quit" : "normal");
 
     if (recipient != nullptr) recipient->SendPacket(reinterpret_cast<const char*>(&packet), sizeof(packet));
     else Broadcast(reinterpret_cast<const char*>(&packet), sizeof(packet));

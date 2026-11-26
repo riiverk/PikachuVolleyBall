@@ -99,8 +99,9 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
     while (!session->IsStopping() && session->RecvPacket(buffer))
     {
         const PacketHeader* header = reinterpret_cast<const PacketHeader*>(buffer);
-        std::printf("[session %lu] recv type=%u size=%u\n", GetCurrentThreadId(),
-            static_cast<unsigned>(header->type), static_cast<unsigned>(header->size));
+        if (header->type != PacketType::INPUT)
+            std::printf("[session %lu] recv type=%u size=%u\n", GetCurrentThreadId(),
+                static_cast<unsigned>(header->type), static_cast<unsigned>(header->size));
         session->ProcessPacket(buffer);
         EnterCriticalSection(&session->stateLock_);
         ++session->receivedCount_;
