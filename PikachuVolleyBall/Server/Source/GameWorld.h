@@ -1,12 +1,17 @@
 #pragma once
+#include "GameConst.h"
 #include "Protocol.h"
 #include "PlayerInput.h"
 #include <array>
 #include <vector>
 
-struct GameEvent { EventKind kind; std::uint8_t who; };
+struct GameEvent
+{
+    EventKind kind;
+    std::uint8_t who;
+    std::uint8_t score[2]{}; // Score immediately after this event.
+};
 
-// Stage reset, movement and court/net/player collisions are implemented; scoring follows.
 class GameWorld
 {
 public:
@@ -18,22 +23,26 @@ public:
     void UpdateBall();
     void ResetBall(int serveSide);
     void CheckScore();
-    void FillState(GameStatePacket& out);
+    // Copy the current packet on the same thread that advances this world.
+    void FillState(GameStatePacket& out) const;
+    // Drain events in the order they were recorded on the world thread.
     std::vector<GameEvent> PopEvents();
-    bool IsStageOver();
-    int GetLoser();
+    bool IsStageOver() const;
+    int GetLoser() const; // Returns -1 until a player reaches the winning score.
 private:
-    friend struct GameWorldResetTestAccess;
+    friend struct GameWorldTestAccess;
     void UpdateBall(const PlayerState (&previousPlayers)[2]);
     void StartSlides();
     void MovePlayers();
     void JumpPlayers();
     void SlidePlayers();
+    void UpdatePlayerFrames(const PlayerState (&previousPlayers)[GameConst::PlayerCount]);
     GameStatePacket state_{};
     std::vector<GameEvent> events_;
     std::uint8_t previousInputs_[2]{};
     std::array<PlayerInput, 2> playerInputs_{};
     int velocityY_[2]{};
+    int walkTicks_[2]{};
     int slideCount_[2]{};
     int slideDirection_[2]{};
     std::uint8_t scores_[2]{};

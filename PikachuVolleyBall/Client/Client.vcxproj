@@ -146,6 +146,8 @@
   </ImportGroup>
   <ItemGroup>
     <ClCompile Include="Source\BallPhysics.cpp" />
+    <ClCompile Include="Source\ConnectScreen.cpp" />
+    <ClCompile Include="Source\ChatPanel.cpp" />
     <ClCompile Include="Source\GameClient.cpp" />
     <ClCompile Include="Source\GameInitialization.cpp" />
     <ClCompile Include="Source\GameInput.cpp" />
@@ -162,6 +164,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\BallPhysics.h" />
+    <ClInclude Include="Source\ConnectScreen.h" />
+    <ClInclude Include="Source\ChatPanel.h" />
     <ClInclude Include="Source\GameClient.h" />
     <ClInclude Include="Source\GameInitialization.h" />
     <ClInclude Include="Source\GameInput.h" />

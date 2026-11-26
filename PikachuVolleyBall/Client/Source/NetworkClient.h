@@ -1,6 +1,7 @@
 #pragma once
 #include "Common.h"
 
+// WPARAM is the PacketType. LPARAM is a new[] copy of the whole packet; the window must delete[] it.
 inline constexpr UINT WM_NET_EVENT = WM_APP + 1;
 
 class NetworkClient
@@ -10,14 +11,16 @@ public:
     ~NetworkClient();
     NetworkClient(const NetworkClient&) = delete;
     NetworkClient& operator=(const NetworkClient&) = delete;
+    void SetWindow(HWND window);
     bool Connect(const char* ip, u_short port);
-    void SendJoinRoom(int roomNo, const char* nick);
+    bool SendJoinRoom(int roomNo, const char* nick);
     static DWORD WINAPI RecvThread(LPVOID arg);
     void ProcessPacket(char* buf);
     void SendInput(std::uint8_t keys);
-    void SendChat(const char* msg);
+    bool SendChat(const char* msg);
     void SendNextStage();
-    void GetLatestState(GameStatePacket& out);
+    // False until this connection has received its first GAME_STATE.
+    bool GetLatestState(GameStatePacket& out);
     void Disconnect();
     bool IsConnected() const;
     int GetLastError() const;
@@ -38,6 +41,7 @@ private:
     int lastError_ = 0;
     HWND window_ = nullptr;
     GameStatePacket latestState_{};
+    bool hasLatestState_ = false;
     mutable CRITICAL_SECTION stateLock_;
     CRITICAL_SECTION sendLock_;
     bool stopping_ = true;

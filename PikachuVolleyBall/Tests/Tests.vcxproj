@@ -155,11 +155,16 @@
     <ClCompile Include="..\Client\Source\NetworkClient.cpp" />
     <ClCompile Include="..\Client\Source\InputManager.cpp" />
     <ClCompile Include="..\Client\Source\GameClient.cpp" />
+    <ClCompile Include="..\Client\Source\ChatPanel.cpp" />
+    <ClCompile Include="..\Client\Source\ConnectScreen.cpp" />
     <ClCompile Include="..\Client\Source\Renderer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Common\Common.h" />
     <ClInclude Include="..\Common\GameConst.h" />
     <ClInclude Include="..\Common\Protocol.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\Client\Source\Resource.rc" />
   </ItemGroup>
 </Project>

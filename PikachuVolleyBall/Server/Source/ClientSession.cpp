@@ -1,8 +1,36 @@
-#include "ClientSession.h"
+﻿#include "ClientSession.h"
 #include "Room.h"
 #include "RoomManager.h"
 #include <cstdio>
 #include <cstring>
+
+static const char* StatusToString(JoinResult r)
+{
+    switch (r)
+    {
+    case JoinResult::Waiting: return "Waiting";
+	case JoinResult::Matched: return "Matched";
+	case JoinResult::Full: return "Full";
+	case JoinResult::Rejected: return "Rejected";
+	default: return "Unknown";
+    }
+}
+
+static bool IsValidJoin(const JoinRoomPacket& packet)
+{
+    if (packet.roomNo <= 0) return false;
+
+    int length = 0;
+    while (length < MAX_NICK && packet.nickname[length] != '\0') ++length;
+    return length > 0 && length < MAX_NICK;
+}
+
+static bool IsValidChat(const ChatPacket& packet)
+{
+    int length = 0;
+    while (length < MAX_CHAT && packet.msg[length] != '\0') ++length;
+    return length > 0 && length < MAX_CHAT;
+}
 
 ClientSession::ClientSession(SOCKET socket, RoomManager* rooms) : socket_(socket), rooms_(rooms)
 {
@@ -61,6 +89,12 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
 {
     ClientSession* session = static_cast<ClientSession*>(arg);
     if (session == nullptr) return ERROR_INVALID_PARAMETER;
+    // Lecture ch06: get the client address from the socket with getpeername().
+    sockaddr_in clientaddr{};
+    int addrlen = sizeof(clientaddr);
+    char addr[INET_ADDRSTRLEN] = "unknown";
+    if (getpeername(session->GetSocket(), reinterpret_cast<sockaddr*>(&clientaddr), &addrlen) == 0)
+        inet_ntop(AF_INET, &clientaddr.sin_addr, addr, sizeof(addr));
     char buffer[MAX_PACKET_SIZE]{};
     while (!session->IsStopping() && session->RecvPacket(buffer))
     {
@@ -73,6 +107,7 @@ DWORD WINAPI ClientSession::ClientThread(LPVOID arg)
         LeaveCriticalSection(&session->stateLock_);
     }
     session->Disconnect();
+    std::printf("[TCP server] client closed: IP=%s, port=%d\n", addr, ntohs(clientaddr.sin_port));
     return session->GetLastError();
 }
 
@@ -129,6 +164,14 @@ std::size_t ClientSession::GetReceivedCount() const
     return count;
 }
 
+bool ClientSession::IsInRoom() const
+{
+    EnterCriticalSection(&stateLock_);
+    const bool inRoom = room_ != nullptr;
+    LeaveCriticalSection(&stateLock_);
+    return inRoom;
+}
+
 SOCKET ClientSession::GetSocket() const
 {
     EnterCriticalSection(&stateLock_);
@@ -139,10 +182,17 @@ SOCKET ClientSession::GetSocket() const
 
 bool ClientSession::ReceiveExact(SOCKET socket, char* buffer, int length, bool atPacketStart)
 {
-    const int count = recvn(socket, buffer, length, 0);
+    if (length == 0) return true;
+    // Lecture ch05: read a fixed length with recv(..., MSG_WAITALL).
+    // A short count means the peer closed; 0 at a packet boundary is a normal close.
+    const int count = recv(socket, buffer, length, MSG_WAITALL);
     if (count == length) return true;
     int error = WSAECONNRESET;
-    if (count == SOCKET_ERROR) error = WSAGetLastError();
+    if (count == SOCKET_ERROR)
+    {
+        error = WSAGetLastError();
+        if (!IsStopping()) err_display("recv()");
+    }
     else if (count == 0 && atPacketStart) error = 0;
     if (!IsStopping()) SetError(error);
     return false;
@@ -168,6 +218,7 @@ void ClientSession::CloseSocket()
     EnterCriticalSection(&stateLock_);
     if (socket_ != INVALID_SOCKET)
     {
+        // Announce the end of the stream before releasing a socket with a pending recv.
         shutdown(socket_, SD_BOTH);
         closesocket(socket_);
         socket_ = INVALID_SOCKET;
@@ -191,16 +242,36 @@ void ClientSession::ProcessPacket(char* buf)
         if (room != nullptr || rooms_ == nullptr) break;
         JoinRoomPacket packet;
         std::memcpy(&packet, buf, sizeof(packet));
-        packet.nickname[MAX_NICK - 1] = '\0';
+        if (!IsValidJoin(packet))
+        {
+            JoinResultPacket reply;
+            reply.result = JoinResult::Rejected;
+            packet.nickname[MAX_NICK - 1] = '\0';
+            std::printf("[join] room=%d, name=%s, result=%s (invalid)\n",
+                packet.roomNo, packet.nickname, StatusToString(reply.result));
+            SendPacket((const char*)&reply, sizeof(reply));
+            break;
+        }
         int seat = -1;
         std::uint8_t result = 0;
         Room* joined = rooms_->JoinRoom(packet.roomNo, this, seat, result);
-        if (joined == nullptr) break;
+        JoinResultPacket reply;
+        reply.result = static_cast<JoinResult>(result);
+        std::printf("[join] room=%d, name=%s, result=%s\n",
+            packet.roomNo, packet.nickname, StatusToString(reply.result));
+        if (joined == nullptr)
+        {
+            SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply));
+            break;
+        }
         EnterCriticalSection(&stateLock_);
         room_ = joined;
         playerIndex_ = seat;
         std::memcpy(nickname_, packet.nickname, MAX_NICK);
         LeaveCriticalSection(&stateLock_);
+        reply.myIndex = static_cast<std::uint8_t>(seat);
+        if (SendPacket(reinterpret_cast<const char*>(&reply), sizeof(reply)))
+            joined->ConfirmJoin(seat);
         break;
     }
     case PacketType::INPUT:
@@ -219,7 +290,11 @@ void ClientSession::ProcessPacket(char* buf)
     {
         ChatPacket packet;
         std::memcpy(&packet, buf, sizeof(packet));
-        packet.msg[MAX_CHAT - 1] = '\0';
+        if (!IsValidChat(packet))
+        {
+            std::printf("[session %lu] ignore invalid CHAT\n", GetCurrentThreadId());
+            break;
+        }
         if (room != nullptr) room->OnChat(index, packet.msg);
         else std::printf("[session %lu] ignore CHAT without room\n", GetCurrentThreadId());
         break;
@@ -234,6 +309,13 @@ void ClientSession::ProcessPacket(char* buf)
         break;
     }
 }
+void ClientSession::CopyNickname(char (&out)[MAX_NICK]) const
+{
+    EnterCriticalSection(&stateLock_);
+    std::memcpy(out, nickname_, sizeof(out));
+    LeaveCriticalSection(&stateLock_);
+}
+
 bool ClientSession::SendPacket(const char* buf, int len)
 {
     if (buf == nullptr || len < static_cast<int>(sizeof(PacketHeader)) || len > MAX_PACKET_SIZE)
@@ -262,10 +344,10 @@ bool ClientSession::SendPacket(const char* buf, int len)
             break;
         }
         const int count = send(socket, buf + sent, len - sent, 0);
-        if (count == SOCKET_ERROR && WSAGetLastError() == WSAEINTR) continue;
         if (count <= 0)
         {
             error = count == SOCKET_ERROR ? WSAGetLastError() : WSAECONNRESET;
+            if (count == SOCKET_ERROR && !IsStopping()) err_display("send()");
             EnterCriticalSection(&stateLock_);
             stopping_ = true;
             lastError_ = error;
@@ -286,12 +368,28 @@ bool ClientSession::SendPacket(const char* buf, int len)
 }
 void ClientSession::Disconnect()
 {
-    if (InterlockedExchange(&disconnected_, 1) == 1) return;
     EnterCriticalSection(&stateLock_);
+    if (disconnected_)
+    {
+        LeaveCriticalSection(&stateLock_);
+        return;
+    }
+    disconnected_ = true;
     stopping_ = true;
     Room* room = room_;
     const int index = playerIndex_;
     LeaveCriticalSection(&stateLock_);
     CloseSocket();
-    if (room != nullptr) room->OnPlayerLeave(index);
+    if (room == nullptr) return;
+    const bool onRoomThread = room->IsRoomThread();
+    room->OnPlayerLeave(index);
+    if (onRoomThread || rooms_ == nullptr)return;
+    if (rooms_->RemoveIfEmpty(room))
+    {
+        EnterCriticalSection(&stateLock_);
+        room_ = nullptr;
+        playerIndex_ = -1;
+        LeaveCriticalSection(&stateLock_);
+        return;
+    }
 }

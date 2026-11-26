@@ -1,12 +1,205 @@
 #define _CRT_SECURE_NO_WARNINGS
+#include "ConnectScreen.h"
+#include "ChatPanel.h"
+#include "GameClient.h"
 #include "GameState.h"
 #include "GameInput.h"
 #include "GameUpdate.h"
 #include "GameRenderer.h"
+#include <algorithm>
+#include <chrono>
+#include <exception>
 #include <filesystem>
+#include <future>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #pragma comment(lib, "msimg32.lib")
 #pragma comment(lib, "winmm.lib")
+
+namespace
+{
+ConnectScreen connectScreen;
+ChatPanel chatPanel;
+bool localGameStarted = false;
+GameClient gameClient;
+// Destroy the future before gameClient so the worker cannot outlive the network client.
+std::future<JoinRequestResult> joinAttempt;
+// A reply can reach the window before the worker's result is collected.
+struct NetEvent { WPARAM type; std::unique_ptr<char[]> packet; };
+std::vector<NetEvent> pendingNetEvents;
+constexpr UINT_PTR joinTimer = 5;
+
+void SetJoinStatus(HWND window, const wchar_t* text)
+{
+	SetDlgItemTextW(window, ConnectScreen::Status, text);
+}
+
+void EnableJoinFields(HWND window, bool enabled)
+{
+	for (const auto control : {ConnectScreen::ServerIp, ConnectScreen::RoomNumber, ConnectScreen::Nickname, ConnectScreen::JoinButton})
+		EnableWindow(GetDlgItem(window, control), enabled);
+}
+
+void ShowConnectFields(HWND window, bool visible)
+{
+    if (visible) connectScreen.ShowConnect(window);
+    else connectScreen.Hide(window);
+}
+
+void StopOnline(HWND window)
+{
+	KillTimer(window, joinTimer);
+	gameClient.Disconnect();
+	chatPanel.Reset(gameClient);
+	ShowConnectFields(window, true);
+	InvalidateRect(window, nullptr, FALSE);
+	pendingNetEvents.clear();
+	// The receive thread has stopped. Discard packets that were already posted.
+	MSG message{};
+	while (PeekMessage(&message, window, WM_NET_EVENT, WM_NET_EVENT, PM_REMOVE))
+		if (message.message == WM_NET_EVENT) delete[] reinterpret_cast<char*>(message.lParam);
+}
+
+bool HandleNetEvent(HWND window, const NetEvent& event)
+{
+	const auto result = gameClient.OnNetEvent(event.type, reinterpret_cast<LPARAM>(event.packet.get()));
+	switch (result)
+	{
+	case NetEventResult::Waiting:
+		connectScreen.ShowWaiting(window, false);
+		chatPanel.Show(true);
+		break;
+	case NetEventResult::Matched:
+		connectScreen.ShowWaiting(window, true);
+		chatPanel.Show(true);
+		break;
+	case NetEventResult::ChatReceived:
+		chatPanel.Refresh(gameClient);
+		break;
+	case NetEventResult::ScoreUpdated:
+		InvalidateRect(window, nullptr, FALSE);
+		break;
+	case NetEventResult::GameStarted:
+		if (!gameClient.StartRendering(window))
+		{
+			StopOnline(window);
+			EnableJoinFields(window, true);
+			SetJoinStatus(window, L"경기 화면을 시작하지 못했습니다. 다시 접속하세요.");
+			return false;
+		}
+		ShowConnectFields(window, false);
+		chatPanel.Cancel(gameClient);
+		chatPanel.Show(true);
+		SetFocus(window);
+		InvalidateRect(window, nullptr, FALSE);
+		break;
+	case NetEventResult::RoomFull:
+	case NetEventResult::JoinRejected:
+		StopOnline(window);
+		EnableJoinFields(window, true);
+		SetJoinStatus(window, result == NetEventResult::RoomFull
+			? L"방이 가득 찼습니다. 다른 방을 선택하세요."
+			: L"방 입장이 거절되었습니다. 다시 시도하세요.");
+		SetFocus(GetDlgItem(window, ConnectScreen::RoomNumber));
+		return false;
+	case NetEventResult::Ignored:
+		break;
+	}
+	return true;
+}
+
+void StartJoin(HWND window)
+{
+	if (joinAttempt.valid() || gameClient.IsConnected()) return;
+
+	struct JoinFields
+	{
+		wchar_t ip[INET_ADDRSTRLEN]{};
+		wchar_t room[11]{};
+		wchar_t nickname[MAX_NICK]{};
+	} fields;
+	GetDlgItemTextW(window, ConnectScreen::ServerIp, fields.ip, ARRAYSIZE(fields.ip));
+	GetDlgItemTextW(window, ConnectScreen::RoomNumber, fields.room, ARRAYSIZE(fields.room));
+	GetDlgItemTextW(window, ConnectScreen::Nickname, fields.nickname, ARRAYSIZE(fields.nickname));
+
+	if (!SetTimer(window, joinTimer, 50, nullptr))
+	{
+		SetJoinStatus(window, L"접속을 시작하지 못했습니다. 다시 시도하세요.");
+		return;
+	}
+	try
+	{
+		joinAttempt = std::async(std::launch::async, [fields]
+		{
+			return gameClient.ConnectAndJoin(fields.ip, fields.room, fields.nickname);
+		});
+	}
+	catch (const std::exception&)
+	{
+		KillTimer(window, joinTimer);
+		SetJoinStatus(window, L"접속을 시작하지 못했습니다. 다시 시도하세요.");
+		return;
+	}
+
+	EnableJoinFields(window, false);
+	EnableWindow(GetDlgItem(window, ConnectScreen::LocalPlayButton), FALSE);
+	SetJoinStatus(window, L"서버에 접속하는 중…");
+}
+
+void CheckJoin(HWND window)
+{
+	if (!joinAttempt.valid())
+	{
+		if (gameClient.IsConnected()) return;
+		StopOnline(window);
+		EnableJoinFields(window, true);
+		SetJoinStatus(window, L"서버 연결이 끊겼습니다. 다시 접속하세요.");
+		return;
+	}
+	if (joinAttempt.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return;
+
+	const JoinRequestResult result = joinAttempt.get();
+	EnableWindow(GetDlgItem(window, ConnectScreen::LocalPlayButton), TRUE);
+	if (result == JoinRequestResult::Sent)
+	{
+		SetJoinStatus(window, L"방 입장 요청을 보냈습니다.");
+		SetFocus(GetDlgItem(window, ConnectScreen::LocalPlayButton));
+		const auto events = std::exchange(pendingNetEvents, {});
+		for (const auto& event : events)
+			if (!HandleNetEvent(window, event)) break;
+		return;
+	}
+
+	StopOnline(window);
+	EnableJoinFields(window, true);
+	int focus = ConnectScreen::JoinButton;
+	const wchar_t* status = L"접속 실패. IP와 서버 상태를 확인하세요.";
+	switch (result)
+	{
+	case JoinRequestResult::InvalidAddress:
+		status = L"올바른 IPv4 주소를 입력하세요.";
+		focus = ConnectScreen::ServerIp;
+		break;
+	case JoinRequestResult::InvalidRoom:
+		status = L"방 번호는 1~2147483647 사이로 입력하세요.";
+		focus = ConnectScreen::RoomNumber;
+		break;
+	case JoinRequestResult::InvalidNickname:
+		status = L"닉네임은 UTF-8로 1~15바이트여야 합니다.";
+		focus = ConnectScreen::Nickname;
+		break;
+	case JoinRequestResult::SendFailed:
+		status = L"입장 요청을 보내지 못했습니다. 다시 접속하세요.";
+		break;
+	default:
+		break;
+	}
+	SetJoinStatus(window, status);
+	SetFocus(GetDlgItem(window, focus));
+}
+}
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam);
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdParam, int nCmdShow)
@@ -38,27 +231,155 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 	WndClass.lpszClassName = lpszClass;
 	WndClass.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
 	RegisterClassEx(&WndClass);
-	hWnd = CreateWindow(lpszClass, lpszWindowName, WS_OVERLAPPEDWINDOW, 0, 0, GameConst::WindowWidth, GameConst::WindowHeight, NULL, (HMENU)NULL, hInstance, NULL);
+	hWnd = CreateWindow(lpszClass, lpszWindowName, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+		0, 0, GameConst::WindowWidth, GameConst::WindowHeight, NULL, (HMENU)NULL, hInstance, NULL);
+	if (!hWnd) return 1;
 	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
-	while (GetMessage(&Message, 0, 0, 0)) {
+	int result;
+	while ((result = GetMessage(&Message, 0, 0, 0)) > 0) {
+		if (!localGameStarted)
+		{
+			if (!joinAttempt.valid() && chatPanel.HandleMessage(Message, gameClient)) continue;
+			// OnKey sends gameplay input only in Playing; form navigation stays with the dialog.
+			if (!joinAttempt.valid() && GetFocus() == hWnd && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
+				gameClient.OnKey(Message.message, Message.wParam);
+			// Let the edit control and IME finish composition instead of dialog Enter navigation.
+			if (GetFocus() != GetDlgItem(hWnd, ChatPanel::Input) &&
+				(gameClient.GetScene() != Scene::Playing || gameClient.IsChatting()) && Message.message != WM_NET_EVENT &&
+				IsDialogMessageW(hWnd, &Message)) continue;
+		}
 		TranslateMessage(&Message);
 		DispatchMessage(&Message);
 	}
-	return Message.wParam;
+	return result == -1 ? 1 : static_cast<int>(Message.wParam);
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 {
-	int center[2] = { ball.x - 50, ball.y + 50 };
+	if (iMsg == WM_NET_EVENT)
+	{
+		NetEvent event{wParam, std::unique_ptr<char[]>(reinterpret_cast<char*>(lParam))};
+		if (!localGameStarted)
+		{
+			if (joinAttempt.valid()) pendingNetEvents.push_back(std::move(event));
+			else HandleNetEvent(hWnd, event);
+		}
+		return 0;
+	}
+
+	if (iMsg == WM_DESTROY)
+	{
+		if (!localGameStarted)
+		{
+			gameClient.SetWindow(nullptr);
+			if (joinAttempt.valid()) joinAttempt.wait();
+			StopOnline(hWnd);
+			connectScreen.Destroy(hWnd);
+			chatPanel.Destroy();
+		}
+		KillTimer(hWnd, 2);
+		KillTimer(hWnd, GameConst::FrameTimerId);
+		KillTimer(hWnd, BallRotate);
+		PostQuitMessage(0);
+		return 0;
+	}
+
+	if (!localGameStarted)
+	{
+		switch (iMsg)
+		{
+		case WM_CREATE:
+			if (!connectScreen.Create(hWnd, g_hInst)) return -1;
+			if (!chatPanel.Create(hWnd, g_hInst)) return -1;
+			gameClient.SetWindow(hWnd);
+			return 0;
+		case WM_GETMINMAXINFO:
+			connectScreen.LimitWindowSize(hWnd, *reinterpret_cast<MINMAXINFO*>(lParam));
+			return 0;
+		case WM_SIZE:
+			connectScreen.Layout(hWnd);
+			chatPanel.Layout();
+			return 0;
+		case WM_ERASEBKGND:
+			return TRUE;
+		case WM_PAINT:
+			if (gameClient.GetScene() == Scene::Playing)
+			{
+				PAINTSTRUCT paint{};
+				BeginPaint(hWnd, &paint);
+				RECT strip{};
+				GetClientRect(hWnd, &strip);
+				strip.top = (std::max)(0L, strip.bottom - GameConst::ChatPanelHeight);
+				FillRect(paint.hdc, &strip, GetSysColorBrush(COLOR_BTNFACE));
+				EndPaint(hWnd, &paint);
+				gameClient.OnTimer();
+			}
+			else connectScreen.Paint(hWnd);
+			return 0;
+		case WM_CTLCOLORSTATIC:
+			if (GetDlgCtrlID(reinterpret_cast<HWND>(lParam)) == ChatPanel::Hint)
+			{
+				SetBkMode(reinterpret_cast<HDC>(wParam), TRANSPARENT);
+				return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_BTNFACE));
+			}
+			return reinterpret_cast<LRESULT>(connectScreen.PaintLabel(reinterpret_cast<HDC>(wParam)));
+		case WM_DRAWITEM:
+			connectScreen.PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+			return TRUE;
+		case WM_SETFOCUS:
+			if (const HWND ipField = GetDlgItem(hWnd, ConnectScreen::ServerIp); IsWindowEnabled(ipField))
+				SetFocus(ipField);
+			return 0;
+		case WM_ACTIVATEAPP:
+			if (!wParam && !joinAttempt.valid()) gameClient.ReleaseInput();
+			break;
+		case WM_KILLFOCUS:
+		case WM_ENTERMENULOOP:
+		case WM_ENTERSIZEMOVE:
+			if (!joinAttempt.valid()) gameClient.ReleaseInput();
+			break;
+		case DM_GETDEFID:
+			return IsWindowEnabled(GetDlgItem(hWnd, ConnectScreen::JoinButton))
+				? MAKELRESULT(ConnectScreen::JoinButton, DC_HASDEFID) : 0;
+		case WM_TIMER:
+			if (wParam == GameConst::FrameTimerId && !joinAttempt.valid()) gameClient.OnTimer();
+			if (wParam == joinTimer && !IsWindowEnabled(GetDlgItem(hWnd, ConnectScreen::JoinButton)))
+				CheckJoin(hWnd);
+			return 0;
+		case WM_COMMAND:
+			if (chatPanel.HandleCommand(wParam, gameClient)) return 0;
+			if (HIWORD(wParam) != BN_CLICKED) return 0;
+			if ((LOWORD(wParam) == ConnectScreen::LeaveButton || LOWORD(wParam) == IDCANCEL) &&
+				gameClient.GetScene() == Scene::Waiting && !joinAttempt.valid())
+			{
+				StopOnline(hWnd);
+				EnableJoinFields(hWnd, true);
+				SetJoinStatus(hWnd, L"방에서 나왔습니다. 다시 접속할 수 있어요.");
+				SetFocus(GetDlgItem(hWnd, ConnectScreen::JoinButton));
+				return 0;
+			}
+			if (LOWORD(wParam) == ConnectScreen::JoinButton)
+				StartJoin(hWnd);
+			if (LOWORD(wParam) == ConnectScreen::LocalPlayButton && !joinAttempt.valid())
+			{
+				gameClient.SetWindow(nullptr);
+				StopOnline(hWnd);
+				localGameStarted = true;
+				connectScreen.Destroy(hWnd);
+				chatPanel.Destroy();
+				SetFocus(hWnd);
+				InitializeGame(hWnd);
+				InvalidateRect(hWnd, nullptr, TRUE);
+			}
+			return 0;
+		}
+		return DefWindowProc(hWnd, iMsg, wParam, lParam);
+	}
 
 	ResetRoundIfNeeded();
-
 	switch (iMsg)
 	{
-	case WM_CREATE:
-		InitializeGame(hWnd);
-		return 0;
 	case WM_PAINT:
 		PaintScores(hWnd);
 		break;
@@ -86,12 +407,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 	case WM_KEYUP:
 		HandleKeyUp(wParam);
 		break;
-	case WM_DESTROY:
-		KillTimer(hWnd, 2);
-		KillTimer(hWnd, GameConst::FrameTimerId);
-		KillTimer(hWnd, BallRotate);
-		PostQuitMessage(0);
-		return 0;
 	}
 	return DefWindowProc(hWnd, iMsg, wParam, lParam);
 }

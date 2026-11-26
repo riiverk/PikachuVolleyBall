@@ -1,5 +1,6 @@
 #include "NetworkClient.h"
 #include <cstring>
+#include <new>
 
 NetworkClient::NetworkClient()
 {
@@ -12,6 +13,13 @@ NetworkClient::~NetworkClient()
     Disconnect();
     DeleteCriticalSection(&sendLock_);
     DeleteCriticalSection(&stateLock_);
+}
+
+void NetworkClient::SetWindow(HWND window)
+{
+    EnterCriticalSection(&stateLock_);
+    window_ = window;
+    LeaveCriticalSection(&stateLock_);
 }
 
 bool NetworkClient::Connect(const char* ip, u_short port)
@@ -58,6 +66,7 @@ bool NetworkClient::Connect(const char* ip, u_short port)
     socket_ = socket;
     stopping_ = false;
     latestState_ = GameStatePacket{};
+    hasLatestState_ = false;
     receivedCount_ = 0;
     lastError_ = 0;
     LeaveCriticalSection(&stateLock_);
@@ -65,17 +74,17 @@ bool NetworkClient::Connect(const char* ip, u_short port)
     if (recvThread_ == nullptr) return fail(static_cast<int>(::GetLastError()));
     return true;
 }
-void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
+bool NetworkClient::SendJoinRoom(int roomNo, const char* nick)
 {
     if (!IsConnected())
     {
         SetError(WSAENOTCONN);
-        return;
+        return false;
     }
     if (roomNo <= 0 || nick == nullptr)
     {
         SetError(WSAEINVAL);
-        return;
+        return false;
     }
     int length = 0;
     while (length < MAX_NICK && nick[length] != '\0') ++length;
@@ -83,12 +92,14 @@ void NetworkClient::SendJoinRoom(int roomNo, const char* nick)
         MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, nick, length, nullptr, 0) == 0)
     {
         SetError(WSAEINVAL);
-        return;
+        return false;
     }
     JoinRoomPacket packet;
     packet.roomNo = roomNo;
     std::memcpy(packet.nickname, nick, length);
-    if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) SetError(0);
+    if (!SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) return false;
+    SetError(0);
+    return true;
 }
 
 bool NetworkClient::SendAll(const char* data, int length)
@@ -175,7 +186,42 @@ bool NetworkClient::ReceiveExact(SOCKET socket, char* buffer, int length, bool a
     if (!IsStopping()) SetError(error);
     return false;
 }
-void NetworkClient::ProcessPacket(char*) { /* TODO 11/7 */ }
+void NetworkClient::ProcessPacket(char* buf)
+{
+    if (buf == nullptr) return;
+    PacketHeader header{};
+    std::memcpy(&header, buf, sizeof(header));
+    if (header.size == 0 || PacketSize(header.type) != header.size) return;
+    switch (header.type)
+    {
+    case PacketType::GAME_STATE:
+        // The latest state is polled by the timer, so it is stored instead of posted.
+        EnterCriticalSection(&stateLock_);
+        std::memcpy(&latestState_, buf, sizeof(latestState_));
+        hasLatestState_ = true;
+        LeaveCriticalSection(&stateLock_);
+        return;
+    case PacketType::JOIN_RESULT:
+    case PacketType::GAME_START:
+    case PacketType::EVENT:
+    case PacketType::SCORE:
+    case PacketType::STAGE_OVER:
+    case PacketType::GAME_OVER:
+    case PacketType::CHAT:
+        break;
+    default:
+        return; // Client-to-server packet types are never valid from the server.
+    }
+    EnterCriticalSection(&stateLock_);
+    const HWND window = window_;
+    LeaveCriticalSection(&stateLock_);
+    if (window == nullptr) return;
+    char* copy = new (std::nothrow) char[header.size];
+    if (copy == nullptr) return;
+    std::memcpy(copy, buf, header.size);
+    if (!PostMessage(window, WM_NET_EVENT, static_cast<WPARAM>(header.type), reinterpret_cast<LPARAM>(copy)))
+        delete[] copy;
+}
 void NetworkClient::SendInput(std::uint8_t keys)
 {
     if (!IsConnected())
@@ -193,13 +239,35 @@ void NetworkClient::SendInput(std::uint8_t keys)
     packet.keys = keys;
     if (SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) SetError(0);
 }
-void NetworkClient::SendChat(const char*) { /* TODO 11/23 */ }
+bool NetworkClient::SendChat(const char* msg)
+{
+    if (!IsConnected())
+    {
+        SetError(WSAENOTCONN);
+        return false;
+    }
+    int length = 0;
+    if (msg) while (length < MAX_CHAT && msg[length] != '\0') ++length;
+    if (!msg || length == 0 || length == MAX_CHAT ||
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, msg, length, nullptr, 0) == 0)
+    {
+        SetError(WSAEINVAL);
+        return false;
+    }
+    ChatPacket packet;
+    std::memcpy(packet.msg, msg, length);
+    if (!SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) return false;
+    SetError(0);
+    return true;
+}
 void NetworkClient::SendNextStage() { /* TODO 11/26 */ }
-void NetworkClient::GetLatestState(GameStatePacket& out)
+bool NetworkClient::GetLatestState(GameStatePacket& out)
 {
     EnterCriticalSection(&stateLock_);
-    out = latestState_; /* Filled by ProcessPacket when packet handling is implemented. */
+    out = latestState_;
+    const bool available = hasLatestState_;
     LeaveCriticalSection(&stateLock_);
+    return available;
 }
 void NetworkClient::Disconnect()
 {
