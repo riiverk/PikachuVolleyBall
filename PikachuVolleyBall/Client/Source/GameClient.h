@@ -43,6 +43,8 @@ private:
     Renderer renderer_;
     std::array<std::uint8_t, GameConst::PlayerCount> scores_{};
     HWND renderWindow_ = nullptr;
+    Phase renderedPhase_ = Phase::Ready;
+    ULONGLONG resultStartedAt_ = 0;
     bool chatting_ = false;
     std::wstring joinedNickname_;
     std::array<std::wstring, GameConst::PlayerCount> nicknames_;

@@ -1037,7 +1037,8 @@ void SlideTest()
     std::uint8_t keys[2] = {RIGHT | ACTION, 0};
     world.Update(keys);
     world.FillState(state);
-    Check(state.p[0].action == Action::Slide && state.p[0].x == 44 && state.p[0].y == 557,
+    Check(state.p[0].action == Action::Slide && state.p[0].frame == 0 &&
+          state.p[0].x == 44 && state.p[0].y == 557,
           "slide starts on ACTION press with a direction and moves 14px without walking");
     int ticks = 1, minimumY = state.p[0].y;
     while (state.p[0].action == Action::Slide && ticks < 60)
@@ -1046,8 +1047,15 @@ void SlideTest()
         world.FillState(state);
         minimumY = std::min(minimumY, static_cast<int>(state.p[0].y));
         ++ticks;
+        if (ticks <= GameConst::SlideFrames)
+        {
+            const int expected = ticks <= 10 ? 0 : ticks <= 24 ? 1 : 2;
+            Check(state.p[0].action == Action::Slide && state.p[0].frame == expected,
+                "slide advances through the original three poses at the correct ticks");
+        }
     }
-    Check(ticks == 41 && state.p[0].action == Action::Idle, "slide lasts 40 moving ticks plus the ending tick");
+    Check(ticks == 41 && state.p[0].action == Action::Idle && state.p[0].frame == 0,
+        "slide returns to the idle pose on its ending tick");
     Check(state.p[0].x == 30 + 15 * 14 + 9 * 7 && state.p[0].y == 560 && minimumY == 530,
           "original slide distance, 30px lift and landing");
     world.Update(keys);
@@ -1934,6 +1942,35 @@ void GameClientTimerTest()
                         "the timer displays both received scores using the correct digit sprites");
     }
 
+    const auto resultPixels = [&](int side)
+    {
+        std::vector<COLORREF> pixels;
+        for (int y = GameConst::PlayerGroundY; y < GameConst::PlayerGroundY + 170; y += 3)
+            for (int x = GameConst::PlayerStartX[side]; x < GameConst::PlayerStartX[side] + 170; x += 3)
+                pixels.push_back(pixel(x, y));
+        return pixels;
+    };
+    const auto finished = [&](Phase phase, int winner)
+    {
+        state.phase = phase;
+        state.p[winner].action = Action::Win;
+        state.p[1 - winner].action = Action::Lose;
+        SendBytes(peer.value, reinterpret_cast<const char*>(&state), sizeof(state));
+        WaitUntil([&]
+        {
+            frame();
+            return pixel(500, 330) != ball;
+        }, "render the final server snapshot without the ball");
+        const auto firstWinner = resultPixels(winner);
+        const auto firstLoser = resultPixels(1 - winner);
+        WaitUntil([&]
+        {
+            frame();
+            return resultPixels(winner) != firstWinner && resultPixels(1 - winner) != firstLoser;
+        }, "the timer animates both result poses without receiving another server snapshot");
+    };
+    finished(Phase::StageOver, 0);
+
     client.ChangeScene(Scene::StageOver);
     start.stage = 2;
     SendBytes(peer.value, reinterpret_cast<const char*>(&start), sizeof(start));
@@ -1943,6 +1980,11 @@ void GameClientTimerTest()
     Check(client.StartRendering(window.handle), "restart the rendering timer for the new stage");
     score.score[0] = 1; score.score[1] = 0;
     Check(sendScore() == NetEventResult::ScoreUpdated, "receive a score in the new stage");
+    state.phase = Phase::Playing;
+    state.p[0].action = state.p[1].action = Action::Idle;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&state), sizeof(state));
+    WaitUntil([&] { frame(); return pixel(500, 330) == ball; }, "the new stage renders gameplay again");
+    finished(Phase::GameOver, 1);
     client.Disconnect();
     Check(!client.OnTimer() && client.GetScene() == Scene::Connect &&
         GameClientTestAccess::Scores(client) == std::array<std::uint8_t, 2>{0, 0},
@@ -1965,6 +2007,7 @@ void GameClientTimerTest()
     Check(!client.OnTimer(), "leaving the playing scene stops rendering");
     std::cout << "PASS: frame timer renders latest TCP state, clears old positions, stops and resets on reconnect\n";
     std::cout << "PASS: SCORE updates both rendered totals without double counting, validates and resets between stages/connections\n";
+    std::cout << "PASS: client animates win and loss from final stage and game snapshots\n";
 }
 
 struct HiddenChatPlayer
@@ -3046,6 +3089,7 @@ void JoinResultTest()
         const ULONGLONG deadline = GetTickCount64() + 20000;
         int winner = -1;
         bool walkFrameReceived = false;
+        GameStatePacket finalState;
         while (winner < 0)
         {
             Check(GetTickCount64() < deadline, "the actual room loop completes the stage");
@@ -3067,11 +3111,17 @@ void JoinResultTest()
                 Check(state.p[0].evil == (stage == 2 ? 1 : 0) && state.p[1].evil == 0,
                     "only the first-stage loser awakens in the actual second stage");
                 walkFrameReceived |= state.p[1].action == Action::Move && state.p[1].frame > 0;
+                if (state.phase == Phase::StageOver || state.phase == Phase::GameOver)
+                    finalState = state;
             }
             else Check(header.type == PacketType::EVENT || header.type == PacketType::SCORE,
                 "stage frames contain state, events or scores before the result");
         }
         Check(walkFrameReceived, "both TCP peers receive changing player frames from the room");
+        Check(finalState.phase == (stage == GameConst::StageCount ? Phase::GameOver : Phase::StageOver) &&
+            finalState.p[winner].action == Action::Win && finalState.p[1 - winner].action == Action::Lose &&
+            finalState.p[0].frame == 0 && finalState.p[1].frame == 0,
+            "both TCP peers receive the server's initial winner and loser poses before the result");
         if (stage == 1)
         {
             NextStagePacket ready;

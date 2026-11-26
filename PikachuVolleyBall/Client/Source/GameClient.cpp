@@ -230,6 +230,7 @@ void GameClient::StopRendering()
 {
     if (renderWindow_) KillTimer(renderWindow_, GameConst::FrameTimerId);
     renderWindow_ = nullptr;
+    renderedPhase_ = Phase::Ready;
     renderer_.Shutdown();
 }
 
@@ -238,6 +239,28 @@ bool GameClient::OnTimer()
     if (!renderWindow_ || scene_ != Scene::Playing || !network_.IsConnected()) return false;
     GameStatePacket state;
     if (!network_.GetLatestState(state)) return false;
+
+    if (state.phase == Phase::StageOver || state.phase == Phase::GameOver)
+    {
+        // The server sends a final snapshot. Keep the poses moving while it waits or stops.
+        const ULONGLONG now = GetTickCount64();
+        if (state.phase != renderedPhase_) resultStartedAt_ = now;
+        const auto step = (now - resultStartedAt_) / GameConst::ResultTimerMs;
+        constexpr int poseCount = 5;
+        constexpr int loserLoopStart = 2;
+        for (int i = 0; i < GameConst::PlayerCount; ++i)
+        {
+            PlayerState& player = state.p[i];
+            if (player.action != Action::Win && player.action != Action::Lose) continue;
+            player.x = GameConst::PlayerStartX[i];
+            player.y = GameConst::PlayerGroundY;
+            const auto pose = player.action == Action::Lose && step >= poseCount
+                ? loserLoopStart + (step - poseCount) % (poseCount - loserLoopStart)
+                : step % poseCount;
+            player.frame = static_cast<std::uint16_t>(pose);
+        }
+    }
+    renderedPhase_ = state.phase;
     renderer_.Render(state, scores_, GameConst::ChatPanelHeight);
     return true;
 }

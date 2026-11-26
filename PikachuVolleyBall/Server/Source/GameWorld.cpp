@@ -111,6 +111,12 @@ void GameWorld::UpdatePlayerFrames(const PlayerState (&previousPlayers)[GameCons
             else if (ticksToLand <= 8) player.frame = ticksToLand <= 5 ? 4 : 3;
             else player.frame = static_cast<std::uint16_t>(1 + ((airborneTicks - 4) / 2) % 2);
         }
+        else if (player.action == Action::Slide)
+        {
+            // The slide update has already consumed this tick from the remaining count.
+            const int remaining = slideCount_[i];
+            player.frame = remaining >= 30 ? 0 : remaining >= 16 ? 1 : 2;
+        }
         else if (player.action == Action::Idle || player.action == Action::Move || player.action != previous.action)
             player.frame = 0;
     }
@@ -207,6 +213,11 @@ void GameWorld::CheckScore()
     state_.ball.vy = 0;
     state_.ball.spike = 0;
     state_.phase = stage_ == GameConst::StageCount ? Phase::GameOver : Phase::StageOver;
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+    {
+        state_.p[i].action = i == scorer ? Action::Win : Action::Lose;
+        state_.p[i].frame = 0;
+    }
 }
 
 void GameWorld::FillState(GameStatePacket& out) const
