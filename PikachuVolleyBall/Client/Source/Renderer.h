@@ -22,6 +22,12 @@ private:
 
     void DrawPlayer(const PlayerState& player, int side);
     void DrawStageResult(const StageResult& result, const GameStatePacket& state);
+    void UpdateBallRotation(const GameStatePacket& state);
+
+    std::uint32_t lastBallTick_ = 0;
+    int ballDirection_ = 0;
+    int ballRotationMs_ = 0;
+    int ballFrame_ = 0;
 
     HWND window_ = nullptr;
     HDC backBufferDC_ = nullptr;

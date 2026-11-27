@@ -681,13 +681,41 @@ void RendererFrameTest()
     Check(pixel(82, 82) == RGB(255, 0, 0) && pixel(198, 70) == RGB(255, 0, 0) &&
         pixel(1078, 82) == RGB(255, 0, 0), "draw a three-digit score without shifting the other player's score");
 
+    // Two opaque pixels distinguish all five ball poses in the rendered buffer.
+    constexpr COLORREF red = RGB(255, 0, 0), black = RGB(0, 0, 0);
+    constexpr COLORREF gray = RGB(159, 159, 159), lightGray = RGB(191, 191, 191);
+    constexpr COLORREF ballPosePixels[5][2] = {
+        {red, black}, {gray, black}, {gray, lightGray}, {black, black}, {red, red}
+    };
+    const auto checkBallPose = [&](std::uint32_t tick, int pose, const char* label) {
+        state.tick = tick;
+        renderer.Render(state);
+        Check(pixel(483, 313) == ballPosePixels[pose][0] &&
+            pixel(483, 323) == ballPosePixels[pose][1], label);
+    };
+    state.ball.vx = 100;
+    checkBallPose(33, 0, "ball rotation starts on the first pose even late in a rally");
+    checkBallPose(39, 0, "six ticks are 96ms, before the next ball pose");
+    checkBallPose(40, 1, "crossing 100ms advances the ball pose");
+    checkBallPose(40, 1, "redrawing a server tick never advances rotation");
+    state.ball.vx = -100;
+    checkBallPose(41, 1, "a bounce keeps the current ball pose");
+    checkBallPose(46, 0, "the next pose advances in the reversed direction");
+    checkBallPose(52, 4, "leftward rotation wraps from the first pose to the last");
+    checkBallPose(58, 3, "rotation retains elapsed time between frames");
+    checkBallPose(65, 2, "rotation progresses across skipped snapshots");
+    checkBallPose(1, 0, "a new stage resets rotation even without rendering the result screen");
+    checkBallPose(8, 4, "leftward rotation restarts from the first pose in the new stage");
+    state.ball.vx = 0;
+    checkBallPose(9, 0, "a vertical serve resets the ball pose");
+
     state.phase = Phase::StageOver;
     renderer.Render(state, {0, 9});
     Check(pixel(500, 330) != ball, "hide the ball after the stage ends");
     Check(pixel(198, 70) == thirdDigitBackground && pixel(1078, 82) == RGB(255, 0, 0),
         "clear old digits when a score shrinks and keep the score visible at stage end");
     DestroyWindow(window);
-    std::cout << "PASS: renderer draws the court and updates player, ball and score sprites\n";
+    std::cout << "PASS: renderer draws the court, player poses, five rotating ball frames and score sprites\n";
 }
 
 void InputManagerTest()

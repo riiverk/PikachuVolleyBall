@@ -33,6 +33,7 @@ constexpr Sprite Warning{0, 0, 512, 512};
 constexpr int PlayerSpriteSize = 64;
 constexpr int PlayerSize = 170;
 constexpr int BallSize = GameConst::BallCollisionSize + GameConst::BallCollisionInset;
+constexpr int BallFrameCount = 5;
 
 void DrawSprite(HDC target, HDC source, const Sprite& sprite, int x, int y, int width, int height)
 {
@@ -136,7 +137,7 @@ void DrawBallSprite(HDC target, HDC atlas, const Sprite& sprite, double x, doubl
         DrawSprite(target, atlas, sprite, static_cast<int>(x), static_cast<int>(y), BallSize, BallSize);
 }
 
-void DrawBall(HDC target, HDC atlas, const BallState& ball, std::uint32_t tick)
+void DrawBall(HDC target, HDC atlas, const BallState& ball, int frame)
 {
     if (ball.spike)
     {
@@ -150,11 +151,6 @@ void DrawBall(HDC target, HDC atlas, const BallState& ball, std::uint32_t tick)
         }
     }
 
-    constexpr int frameCount = 5;
-    constexpr int ticksPerFrame = GameConst::RotationTimerMs / GameConst::TickMs;
-    int frame = static_cast<int>((tick / ticksPerFrame) % frameCount);
-    if (ball.vx == 0) frame = 0;
-    if (ball.vx < 0) frame = (frameCount - frame) % frameCount;
     DrawBallSprite(target, atlas, {88 + 42 * frame, 158, 40, 40}, ball.x, ball.y);
 }
 }
@@ -308,6 +304,28 @@ void Renderer::DrawStageResult(const StageResult& result, const GameStatePacket&
     RestoreDC(backBufferDC_, saved);
 }
 
+void Renderer::UpdateBallRotation(const GameStatePacket& state)
+{
+    const int direction = state.phase == Phase::Playing
+        ? (state.ball.vx > 0) - (state.ball.vx < 0) : 0;
+    if (direction == 0 || ballDirection_ == 0 || state.tick < lastBallTick_)
+    {
+        ballFrame_ = 0;
+        ballRotationMs_ = 0;
+    }
+    else
+    {
+        // The previous snapshot supplies the direction up to this tick.
+        const auto elapsed = static_cast<std::uint64_t>(state.tick - lastBallTick_) *
+            GameConst::TickMs + ballRotationMs_;
+        const int steps = static_cast<int>((elapsed / GameConst::RotationTimerMs) % BallFrameCount);
+        ballFrame_ = (ballFrame_ + ballDirection_ * steps + BallFrameCount) % BallFrameCount;
+        ballRotationMs_ = static_cast<int>(elapsed % GameConst::RotationTimerMs);
+    }
+    lastBallTick_ = state.tick;
+    ballDirection_ = direction;
+}
+
 void Renderer::Render(const GameStatePacket& state, std::array<std::uint8_t, GameConst::PlayerCount> scores,
     int bottomInset, const StageResult* result)
 {
@@ -317,11 +335,12 @@ void Renderer::Render(const GameStatePacket& state, std::array<std::uint8_t, Gam
     client.bottom -= std::clamp(bottomInset, 0, static_cast<int>(client.bottom));
     if (client.bottom <= 0) return;
 
+    UpdateBallRotation(state);
     DrawCourt(backBufferDC_, spriteDC_, state.tick);
     for (int side = 0; side < GameConst::PlayerCount; ++side)
         DrawPlayer(state.p[side], side);
     if (state.phase != Phase::StageOver && state.phase != Phase::GameOver)
-        DrawBall(backBufferDC_, spriteDC_, state.ball, state.tick);
+        DrawBall(backBufferDC_, spriteDC_, state.ball, ballFrame_);
 
     constexpr int scoreMargin = 50;
     DrawScore(backBufferDC_, spriteDC_, scores[0], scoreMargin, false);
@@ -358,6 +377,10 @@ void Renderer::Shutdown()
     for (HFONT font : resultFonts_) if (font) DeleteObject(font);
     resultFonts_.fill(nullptr);
 
+    lastBallTick_ = 0;
+    ballDirection_ = 0;
+    ballRotationMs_ = 0;
+    ballFrame_ = 0;
     window_ = nullptr;
     backBufferDC_ = nullptr;
     backBuffer_ = nullptr;
