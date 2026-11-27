@@ -91,6 +91,18 @@ void Check(bool ok, const char* label)
     if (!ok) throw std::runtime_error(label);
 }
 
+void ExpectClientLeave(SOCKET peer)
+{
+    LeavePacket packet;
+    const int received = recvn(peer, reinterpret_cast<char*>(&packet), sizeof(packet));
+    Check(received == static_cast<int>(sizeof(packet)) &&
+        packet.size == sizeof(packet) && packet.type == PacketType::LEAVE,
+        ("LEAVE is the final whole client frame; received=" + std::to_string(received) +
+            ", type=" + std::to_string(static_cast<unsigned>(packet.type))).c_str());
+    char tail;
+    Check(recv(peer, &tail, 1, 0) == 0, "exactly one LEAVE precedes clean EOF");
+}
+
 void AdvanceWorldBall(GameWorld& world, BallState& ball)
 {
     GameWorldTestAccess::SetBall(world, ball);
@@ -443,8 +455,7 @@ void GameClientInputTest()
             packet.type == PacketType::INPUT && packet.size == sizeof(packet) && packet.keys == keys,
             "send only gameplay changes and release held keys on focus loss, scene changes and disconnect");
     }
-    char tail;
-    Check(recv(peer.value, &tail, 1, 0) == 0, "no gameplay packets from other scenes, UI keys or repeated keys");
+    ExpectClientLeave(peer.value);
     std::cout << "PASS: game client routes keys by scene, suppresses repeats and releases held keys\n";
 }
 
@@ -968,8 +979,7 @@ void JoinRoomSendTest()
     Check(packet.roomNo == 28 && std::strcmp(packet.nickname, "123456789012345") == 0 && packet.nickname[MAX_NICK - 1] == '\0',
           "maximum nickname is NUL terminated");
     client.Disconnect();
-    char tail;
-    Check(recv(receiver.value, &tail, 1, 0) == 0, "invalid requests must not leave extra wire data");
+    ExpectClientLeave(receiver.value);
     std::cout << "PASS: JOIN_ROOM wire bytes, UTF-8/length validation and disconnected client handling\n";
 }
 
@@ -1760,6 +1770,83 @@ void GameWorldScoreTest()
     std::cout << "PASS: floor scoring, five-point stage results, loser awakening and reset\n";
 }
 
+void ClientControlPacketTest()
+{
+    Listener listener;
+    NetworkClient client;
+    Check(!client.SendNextStage() && client.GetLastError() == WSAENOTCONN,
+        "NEXT_STAGE requires a connected socket");
+    for (int cycle = 0; cycle < 6; ++cycle)
+    {
+        Check(client.Connect("127.0.0.1", listener.port), "reconnect control-packet client");
+        Socket peer; peer.value = listener.Accept();
+        const DWORD timeout = 2000;
+        setsockopt(peer.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+        Check(client.SendNextStage() && client.GetLastError() == 0, "send NEXT_STAGE through the shared send path");
+        std::array<unsigned char, 3> ready{};
+        Check(recvn(peer.value, reinterpret_cast<char*>(ready.data()), static_cast<int>(ready.size())) == static_cast<int>(ready.size()) &&
+            ready == std::array<unsigned char, 3>{3, 0, 3}, "NEXT_STAGE has the exact three-byte wire format");
+        client.SendInput(LEFT);
+        InputPacket input;
+        Check(recvn(peer.value, reinterpret_cast<char*>(&input), sizeof(input)) == sizeof(input) && input.keys == LEFT,
+            "sending readiness keeps the connection usable");
+        if (cycle % 2)
+        {
+            const ScorePacket partial;
+            SendBytes(peer.value, reinterpret_cast<const char*>(&partial), 1);
+        }
+        else
+        {
+            const std::array<GameStatePacket, 3> queued{};
+            SendBytes(peer.value, reinterpret_cast<const char*>(queued.data()), static_cast<int>(sizeof(queued)));
+        }
+        const auto started = std::chrono::steady_clock::now();
+        client.Disconnect();
+        client.Disconnect();
+        Check(std::chrono::steady_clock::now() - started < std::chrono::seconds(2) &&
+            !client.IsConnected() && !client.WaitForReceiveEnd(0), "disconnect reaps idle/partial reception promptly");
+        if (cycle % 2 == 0) Check(client.GetReceivedCount() == 3, "in-flight game states are drained before socket closure");
+        ExpectClientLeave(peer.value);
+        Check(!client.SendNextStage() && client.GetLastError() == WSAENOTCONN,
+            "NEXT_STAGE after disconnect cannot append another frame");
+    }
+    Socket destructorPeer;
+    {
+        NetworkClient temporary;
+        Check(temporary.Connect("127.0.0.1", listener.port), "connect a client for automatic cleanup");
+        destructorPeer.value = listener.Accept();
+        const DWORD timeout = 2000;
+        setsockopt(destructorPeer.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+    }
+    ExpectClientLeave(destructorPeer.value);
+
+    Check(client.Connect("127.0.0.1", listener.port), "connect before remote EOF");
+    Socket closed; closed.value = listener.Accept();
+    shutdown(closed.value, SD_SEND);
+    Check(client.WaitForReceiveEnd(2000) && client.GetLastError() == 0, "remote EOF ends reception first");
+    client.Disconnect();
+    char tail;
+    Check(recv(closed.value, &tail, 1, 0) == 0 && client.GetLastError() == 0,
+        "cleanup after remote EOF stays clean without sending to a closed connection");
+    std::cout << "PASS: NEXT_STAGE bytes, final LEAVE before EOF, repeated/destructor cleanup, partial receive and reconnect\n";
+}
+
+void ClientLeaveRoomTest()
+{
+    RoomManager rooms;
+    Listener listener;
+    NetworkClient client;
+    Check(client.Connect("127.0.0.1", listener.port), "connect before leaving a waiting room");
+    ClientSession session(listener.Accept(), &rooms);
+    Check(session.Start() && client.SendJoinRoom(26, "leaver"), "join a real server-side waiting room");
+    WaitUntil([&] { return session.GetReceivedCount() == 1 && rooms.GetRoomCount() == 1; }, "the waiting room is created");
+    client.Disconnect();
+    Check(session.WaitForFinish(2000) && session.GetReceivedCount() == 2 && session.GetLastError() == 0 &&
+        rooms.GetRoomCount() == 0 && !session.IsInRoom(),
+        "LEAVE is dispatched before EOF and removes the empty waiting room");
+    std::cout << "PASS: client Disconnect sends LEAVE to the real session and removes its waiting room\n";
+}
+
 void ClientReceiveTest()
 {
     Check(NetworkClient::RecvThread(nullptr) == ERROR_INVALID_PARAMETER, "null receive thread argument rejected");
@@ -2112,8 +2199,7 @@ void ChatSendTest()
             "send a whole, terminated chat frame without claiming a player identity");
     }
     client.Disconnect();
-    char tail;
-    Check(recv(peer.value, &tail, 1, 0) == 0, "invalid messages never reach the wire");
+    ExpectClientLeave(peer.value);
     std::cout << "PASS: CHAT framing, UTF-8 63-byte boundaries, rejection and disconnected sending\n";
 }
 
@@ -2524,6 +2610,37 @@ struct NextStageWaiter
         thread = nullptr;
     }
 };
+
+void ClientNextStageTest()
+{
+    Room room;
+    Listener listener;
+    NetworkClient first, second;
+    Check(first.Connect("127.0.0.1", listener.port), "connect the first readiness client");
+    ClientSession player0(listener.Accept());
+    Check(second.Connect("127.0.0.1", listener.port), "connect the second readiness client");
+    ClientSession player1(listener.Accept());
+    room.AddPlayer(&player0); room.AddPlayer(&player1);
+    RoomTestAccess::Bind(player0, room, 0); RoomTestAccess::Bind(player1, room, 1);
+    Check(player0.Start() && player1.Start(), "start real server session receivers for NEXT_STAGE");
+    GameWorldTestAccess::FinishFirstStage(RoomTestAccess::World(room), 0);
+    room.BroadcastStageOver();
+    WaitUntil([&] { return first.GetReceivedCount() == 1 && second.GetReceivedCount() == 1; }, "both clients receive stage end");
+    NextStageWaiter waiting(room);
+    Check(first.SendNextStage() && first.SendNextStage(), "send first player's readiness twice through NetworkClient");
+    WaitUntil([&] { return player0.GetReceivedCount() == 2; }, "the first player's readiness reaches the server");
+    Check(WaitForSingleObject(waiting.thread, 30) == WAIT_TIMEOUT, "duplicate readiness cannot stand in for the other player");
+    Check(second.SendNextStage(), "send the second player's readiness through NetworkClient");
+    waiting.Finish();
+    Check(waiting.ready && GameWorldTestAccess::StageIsFresh(RoomTestAccess::World(room), 2, 1),
+        "both real clients' requests advance the next-stage server flow");
+    WaitUntil([&] { return first.GetReceivedCount() == 2 && second.GetReceivedCount() == 2; }, "both clients receive GAME_START");
+    first.Disconnect(); second.Disconnect();
+    Check(player0.WaitForFinish(2000) && player1.WaitForFinish(2000) &&
+        player0.GetReceivedCount() == 3 && player1.GetReceivedCount() == 2,
+        "both sessions receive one final LEAVE after readiness");
+    std::cout << "PASS: NetworkClient NEXT_STAGE reaches both real sessions, advances the room and closes with LEAVE\n";
+}
 
 void RoomNextStageTest()
 {
@@ -3254,6 +3371,7 @@ int main()
     int code = 0;
     try
     {
+        ClientControlPacketTest(); ClientLeaveRoomTest(); ClientNextStageTest();
         ChatSendTest(); RoomChatTest(); GameClientChatTest();
         SessionDisconnectTest();
         RoomQuitTest();

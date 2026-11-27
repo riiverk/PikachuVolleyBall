@@ -65,6 +65,7 @@ bool NetworkClient::Connect(const char* ip, u_short port)
     EnterCriticalSection(&stateLock_);
     socket_ = socket;
     stopping_ = false;
+    closing_ = false;
     latestState_ = GameStatePacket{};
     hasLatestState_ = false;
     receivedCount_ = 0;
@@ -110,7 +111,7 @@ bool NetworkClient::SendAll(const char* data, int length)
     while (sent < length)
     {
         const SOCKET socket = GetSocket();
-        if (socket == INVALID_SOCKET || IsStopping())
+        if (socket == INVALID_SOCKET || !CanSend())
         {
             error = WSAENOTCONN;
             break;
@@ -260,7 +261,13 @@ bool NetworkClient::SendChat(const char* msg)
     SetError(0);
     return true;
 }
-void NetworkClient::SendNextStage() { /* TODO 11/26 */ }
+bool NetworkClient::SendNextStage()
+{
+    const NextStagePacket packet;
+    if (!SendAll(reinterpret_cast<const char*>(&packet), sizeof(packet))) return false;
+    SetError(0);
+    return true;
+}
 bool NetworkClient::GetLatestState(GameStatePacket& out)
 {
     EnterCriticalSection(&stateLock_);
@@ -271,6 +278,38 @@ bool NetworkClient::GetLatestState(GameStatePacket& out)
 }
 void NetworkClient::Disconnect()
 {
+    // Serialize the final frame with other sends, then reject all later sends.
+    EnterCriticalSection(&sendLock_);
+    EnterCriticalSection(&stateLock_);
+    const bool notify = socket_ != INVALID_SOCKET && !stopping_ && !closing_;
+    closing_ = true;
+    bool graceful = false;
+    if (notify)
+    {
+        // Keep the receiver from closing/reusing this socket during the small final send.
+        // A peer that no longer reads must not make application exit wait indefinitely.
+        const DWORD timeout = 200;
+        if (setsockopt(socket_, SOL_SOCKET, SO_SNDTIMEO,
+            reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0)
+        {
+            const LeavePacket packet;
+            const char* data = reinterpret_cast<const char*>(&packet);
+            int sent = 0;
+            while (sent < static_cast<int>(sizeof(packet)))
+            {
+                const int count = send(socket_, data + sent, static_cast<int>(sizeof(packet)) - sent, 0);
+                if (count <= 0) break; // LEAVE is best-effort; always finish local cleanup.
+                sent += count;
+            }
+            if (sent == static_cast<int>(sizeof(packet))) graceful = shutdown(socket_, SD_SEND) == 0;
+        }
+    }
+    LeaveCriticalSection(&stateLock_);
+    LeaveCriticalSection(&sendLock_);
+    // Let the receive thread drain in-flight states until the server processes LEAVE
+    // and closes. Closing with unread inbound bytes can discard the final notification.
+    if (graceful && recvThread_ != nullptr && GetCurrentThreadId() != recvThreadId_)
+        WaitForSingleObject(recvThread_, 200);
     EnterCriticalSection(&stateLock_);
     stopping_ = true;
     LeaveCriticalSection(&stateLock_);
@@ -282,14 +321,11 @@ void NetworkClient::Disconnect()
         recvThread_ = nullptr;
         recvThreadId_ = 0;
     }
-    EnterCriticalSection(&sendLock_);
-    LeaveCriticalSection(&sendLock_);
     if (winsockStarted_)
     {
         WSACleanup();
         winsockStarted_ = false;
     }
-    // LEAVE is sent when packet transmission and graceful exit are implemented.
 }
 
 SOCKET NetworkClient::GetSocket() const
@@ -301,6 +337,14 @@ SOCKET NetworkClient::GetSocket() const
 }
 
 bool NetworkClient::IsConnected() const { return GetSocket() != INVALID_SOCKET; }
+
+bool NetworkClient::CanSend() const
+{
+    EnterCriticalSection(&stateLock_);
+    const bool allowed = !stopping_ && !closing_;
+    LeaveCriticalSection(&stateLock_);
+    return allowed;
+}
 
 bool NetworkClient::IsStopping() const
 {
@@ -321,7 +365,7 @@ int NetworkClient::GetLastError() const
 void NetworkClient::SetError(int error)
 {
     EnterCriticalSection(&stateLock_);
-    if (error != 0 || !stopping_) lastError_ = error;
+    if (error != 0 || (!stopping_ && !closing_)) lastError_ = error;
     LeaveCriticalSection(&stateLock_);
 }
 

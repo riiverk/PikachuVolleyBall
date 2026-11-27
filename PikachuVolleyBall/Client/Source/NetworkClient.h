@@ -18,9 +18,10 @@ public:
     void ProcessPacket(char* buf);
     void SendInput(std::uint8_t keys);
     bool SendChat(const char* msg);
-    void SendNextStage();
+    bool SendNextStage();
     // False until this connection has received its first GAME_STATE.
     bool GetLatestState(GameStatePacket& out);
+    // Best-effort LEAVE, then stop/join reception and release Winsock. Owner-thread only.
     void Disconnect();
     bool IsConnected() const;
     int GetLastError() const;
@@ -31,6 +32,7 @@ private:
     bool RecvPacket(char* buf);
     bool ReceiveExact(SOCKET socket, char* buffer, int length, bool atPacketStart);
     SOCKET GetSocket() const;
+    bool CanSend() const;
     bool IsStopping() const;
     void SetError(int error);
     void CloseSocket();
@@ -45,5 +47,6 @@ private:
     mutable CRITICAL_SECTION stateLock_;
     CRITICAL_SECTION sendLock_;
     bool stopping_ = true;
+    bool closing_ = true;
     std::size_t receivedCount_ = 0;
 };
