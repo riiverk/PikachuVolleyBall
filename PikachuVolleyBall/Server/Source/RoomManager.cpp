@@ -1,5 +1,6 @@
 ﻿#include "RoomManager.h"
 #include "Room.h"
+#include "ClientSession.h"
 #include <cstdio>
 #include <new>
 
@@ -116,7 +117,13 @@ bool RoomManager::RemoveIfEmpty(Room* room)
     remaining = roomCount_;
     LeaveCriticalSection(&csRooms_);
     if (removed == nullptr) return false;
+    
+    ClientSession* players[GameConst::PlayerCount]{};
+    for (int i = 0; i < GameConst::PlayerCount; ++i)
+        players[i] = removed->GetPlayer(i);
     delete removed;
+    for (ClientSession* player : players)
+        if (player != nullptr) player->ClearRoom();
     std::printf("[rooms] removed room %d, %d left\n", removedNo, remaining);
     return true;
 }

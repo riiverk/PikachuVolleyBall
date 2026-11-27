@@ -1,4 +1,4 @@
-#include "Server.h"
+﻿#include "Server.h"
 #include <cstdio>
 #include <new>
 
@@ -114,6 +114,7 @@ void Server::AcceptLoop()
             SetError(WSAGetLastError());
             break;
         }
+        RemoveFinishedClients();
         if (ready == 0 || IsStopping()) continue;
         sockaddr_in clientaddr{};
         int addrlen = sizeof(clientaddr);

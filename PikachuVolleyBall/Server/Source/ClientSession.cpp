@@ -173,6 +173,14 @@ bool ClientSession::IsInRoom() const
     return inRoom;
 }
 
+void ClientSession::ClearRoom()
+{
+    EnterCriticalSection(&stateLock_);
+    room_ = nullptr;
+    playerIndex_ = -1;
+    LeaveCriticalSection(&stateLock_);
+}
+
 SOCKET ClientSession::GetSocket() const
 {
     EnterCriticalSection(&stateLock_);
@@ -385,12 +393,5 @@ void ClientSession::Disconnect()
     const bool onRoomThread = room->IsRoomThread();
     room->OnPlayerLeave(index);
     if (onRoomThread || rooms_ == nullptr)return;
-    if (rooms_->RemoveIfEmpty(room))
-    {
-        EnterCriticalSection(&stateLock_);
-        room_ = nullptr;
-        playerIndex_ = -1;
-        LeaveCriticalSection(&stateLock_);
-        return;
-    }
+    rooms_->RemoveIfEmpty(room);
 }
