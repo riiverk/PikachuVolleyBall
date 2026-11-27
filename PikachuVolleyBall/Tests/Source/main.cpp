@@ -2058,7 +2058,10 @@ void GameClientTimerTest()
     };
     finished(Phase::StageOver, 0);
 
-    client.ChangeScene(Scene::StageOver);
+    StageOverPacket ended; ended.winner = 0;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&ended), sizeof(ended));
+    Check(receive(PacketType::STAGE_OVER) == NetEventResult::StageEnded && client.OnTimer(),
+        "stage end keeps rendering the animated result overlay");
     start.stage = 2;
     SendBytes(peer.value, reinterpret_cast<const char*>(&start), sizeof(start));
     Check(receive(PacketType::GAME_START) == NetEventResult::GameStarted &&
@@ -2246,6 +2249,114 @@ void RoomChatTest()
             "other rooms, malformed messages and departed senders receive no chat traffic");
     }
     std::cout << "PASS: room-only chat, sender spoof prevention, malformed frames and departed senders\n";
+}
+
+void GameClientStageScreenTest()
+{
+    HiddenChatPlayer player;
+    StageOverScreen screen;
+    Check(screen.Create(player.window, GetModuleHandleW(nullptr)), "create native stage-result buttons");
+    Listener listener;
+    const auto startMatch = [&](Socket& peer)
+    {
+        Check(player.client.ConnectAndJoin(L"127.0.0.1", L"27", L"red", listener.port) == JoinRequestResult::Sent,
+            "connect before testing the stage screen");
+        peer.value = listener.Accept();
+        const DWORD timeout = 2000;
+        setsockopt(peer.value, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout));
+        JoinRoomPacket join;
+        Check(recvn(peer.value, reinterpret_cast<char*>(&join), sizeof(join)) == sizeof(join), "receive the join request");
+        JoinResultPacket reply; reply.result = JoinResult::Matched; reply.myIndex = 0;
+        GameStartPacket start; std::memcpy(start.nick[0], "red", 4); std::memcpy(start.nick[1], "blue", 5);
+        SendBytes(peer.value, reinterpret_cast<const char*>(&reply), sizeof(reply));
+        SendBytes(peer.value, reinterpret_cast<const char*>(&start), sizeof(start));
+        Check(player.Receive(PacketType::JOIN_RESULT) == NetEventResult::Matched &&
+            player.Receive(PacketType::GAME_START) == NetEventResult::GameStarted, "enter a real network-controlled playing scene");
+        Check(player.client.StartRendering(player.window), "start the stage renderer");
+    };
+    Socket peer;
+    startMatch(peer);
+    player.client.OnKey(WM_KEYDOWN, 'Z');
+    InputPacket held;
+    Check(recvn(peer.value, reinterpret_cast<char*>(&held), sizeof(held)) == sizeof(held) && held.keys == ACTION,
+        "hold the action key just before the stage ends");
+    ScorePacket score; score.scorer = 0; score.score[0] = 5; score.score[1] = 3;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&score), sizeof(score));
+    Check(player.Receive(PacketType::SCORE) == NetEventResult::ScoreUpdated, "the score arrives before the stage result");
+    StageOverPacket ended; ended.winner = 0;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&ended), sizeof(ended));
+    Check(player.Receive(PacketType::STAGE_OVER) == NetEventResult::StageEnded && player.client.GetScene() == Scene::StageOver &&
+        player.client.GetStageResult().scores == std::array<std::uint8_t, 2>{5, 3} &&
+        player.client.GetStageResult().myIndex == 0 && player.client.GetStageResult().names[1] == L"blue",
+        "stage results preserve both scores, nicknames and the local player identity");
+    Check(recvn(peer.value, reinterpret_cast<char*>(&held), sizeof(held)) == sizeof(held) && held.keys == 0,
+        "entering the stage screen releases the held gameplay key");
+    player.client.OnKey(WM_KEYDOWN, 'Z');
+    Check(!player.client.GetStageResult().ready, "a held action key cannot automatically ready the next stage");
+    player.client.OnKey(WM_KEYUP, 'Z');
+    screen.Show(player.client.GetStageResult());
+    player.panel.Show(true);
+    Check(player.client.OnTimer() && IsWindowEnabled(GetDlgItem(player.window, StageOverScreen::NextButton)),
+        "the stage overlay renders even if no final state snapshot was received");
+    for (const auto size : {std::pair{1160, 830}, std::pair{446, 692}})
+    {
+        MoveWindow(player.window, 0, 0, size.first, size.second, FALSE);
+        screen.Layout(); player.panel.Layout();
+        RECT button{}, chat{};
+        GetWindowRect(GetDlgItem(player.window, StageOverScreen::NextButton), &button);
+        GetWindowRect(GetDlgItem(player.window, ChatPanel::History), &chat);
+        Check(button.bottom <= chat.top && button.right > button.left, "result buttons stay above chat at normal and minimum sizes");
+    }
+    Check(player.client.BeginChat(), "chat remains available after a stage");
+    player.client.OnKey(WM_KEYDOWN, 'Z');
+    Check(!player.client.GetStageResult().ready, "typing Z in chat does not ready the next stage");
+    player.client.EndChat();
+    player.client.OnKey(WM_KEYDOWN, VK_LEFT);
+    player.client.OnKey(WM_KEYDOWN, 'Z');
+    player.client.OnKey(WM_KEYDOWN, 'Z');
+    Check(player.client.GetStageResult().ready && !player.client.RequestNextStage(), "Z and repeated requests submit readiness once");
+    screen.Update(player.client.GetStageResult());
+    Check(!IsWindowEnabled(GetDlgItem(player.window, StageOverScreen::NextButton)), "ready status disables the button");
+    NextStagePacket ready;
+    Check(recvn(peer.value, reinterpret_cast<char*>(&ready), sizeof(ready)) == sizeof(ready) && ready.type == PacketType::NEXT_STAGE,
+        "the stage screen sends NEXT_STAGE rather than gameplay INPUT");
+    SendBytes(peer.value, reinterpret_cast<const char*>(&ended), sizeof(ended));
+    Check(player.Receive(PacketType::STAGE_OVER) == NetEventResult::Ignored && player.client.GetStageResult().ready,
+        "a duplicated stage result cannot clear an already submitted readiness");
+    GameStartPacket next; next.stage = 2;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&next), sizeof(next));
+    Check(player.Receive(PacketType::GAME_START) == NetEventResult::GameStarted &&
+        player.client.GetScene() == Scene::Playing && !player.client.GetStageResult().ready,
+        "server GAME_START resumes playing and clears readiness");
+    screen.Hide();
+    score.scorer = 1; score.score[0] = 1; score.score[1] = 5;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&score), sizeof(score));
+    Check(player.Receive(PacketType::SCORE) == NetEventResult::ScoreUpdated, "update the second-stage score");
+    ended.stage = 2; ended.winner = 1;
+    SendBytes(peer.value, reinterpret_cast<const char*>(&ended), sizeof(ended));
+    Check(player.Receive(PacketType::STAGE_OVER) == NetEventResult::StageEnded, "display the final stage end");
+    screen.Show(player.client.GetStageResult());
+    Check(!player.client.GetStageResult().CanContinue() && !player.client.RequestNextStage() &&
+        !(GetWindowLongPtrW(GetDlgItem(player.window, StageOverScreen::NextButton), GWL_STYLE) & WS_VISIBLE),
+        "the final stage has no third-stage button or readiness request");
+    player.client.Disconnect();
+    ExpectClientLeave(peer.value);
+
+    Socket retry;
+    startMatch(retry);
+    ended.stage = 1; ended.winner = 0;
+    SendBytes(retry.value, reinterpret_cast<const char*>(&ended), sizeof(ended));
+    Check(player.Receive(PacketType::STAGE_OVER) == NetEventResult::StageEnded, "start another stage-result session");
+    GameOverPacket quit; quit.reason = GameOverReason::Quit; quit.winner = 0;
+    SendBytes(retry.value, reinterpret_cast<const char*>(&quit), sizeof(quit));
+    Check(player.Receive(PacketType::GAME_OVER) == NetEventResult::StageEnded && !player.client.GetStageResult().CanContinue() &&
+        !player.client.RequestNextStage(), "an opponent departure cancels next-stage readiness");
+    SendBytes(retry.value, reinterpret_cast<const char*>(&next), sizeof(next));
+    Check(player.Receive(PacketType::GAME_START) == NetEventResult::Ignored, "a departed room cannot resume another stage");
+    player.client.Disconnect();
+    ExpectClientLeave(retry.value);
+    screen.Destroy();
+    std::cout << "PASS: stage-result overlay, score/name preservation, Z/button readiness, debounce, final stage and peer departure\n";
 }
 
 void GameClientChatTest()
@@ -3372,7 +3483,7 @@ int main()
     try
     {
         ClientControlPacketTest(); ClientLeaveRoomTest(); ClientNextStageTest();
-        ChatSendTest(); RoomChatTest(); GameClientChatTest();
+        ChatSendTest(); RoomChatTest(); GameClientChatTest(); GameClientStageScreenTest();
         SessionDisconnectTest();
         RoomQuitTest();
         RoomQuitSuppressionTest();

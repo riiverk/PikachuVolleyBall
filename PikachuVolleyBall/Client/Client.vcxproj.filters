@@ -16,6 +16,9 @@
     <ClCompile Include="Source\ChatPanel.cpp">
       <Filter>Source</Filter>
     </ClCompile>
+    <ClCompile Include="Source\StageOverScreen.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
     <ClCompile Include="Source\GameClient.cpp">
       <Filter>Source</Filter>
     </ClCompile>
@@ -64,6 +67,9 @@
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\ChatPanel.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="Source\StageOverScreen.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="Source\GameClient.h">

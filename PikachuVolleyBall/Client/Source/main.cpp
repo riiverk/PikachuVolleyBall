@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "ConnectScreen.h"
 #include "ChatPanel.h"
+#include "StageOverScreen.h"
 #include "GameClient.h"
 #include "GameState.h"
 #include "GameInput.h"
@@ -22,6 +23,7 @@ namespace
 {
 ConnectScreen connectScreen;
 ChatPanel chatPanel;
+StageOverScreen stageOverScreen;
 bool localGameStarted = false;
 GameClient gameClient;
 // Destroy the future before gameClient so the worker cannot outlive the network client.
@@ -53,6 +55,7 @@ void StopOnline(HWND window)
 	KillTimer(window, joinTimer);
 	gameClient.Disconnect();
 	chatPanel.Reset(gameClient);
+	stageOverScreen.Hide();
 	ShowConnectFields(window, true);
 	InvalidateRect(window, nullptr, FALSE);
 	pendingNetEvents.clear();
@@ -81,6 +84,14 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 	case NetEventResult::ScoreUpdated:
 		InvalidateRect(window, nullptr, FALSE);
 		break;
+	case NetEventResult::StageEnded:
+		ShowConnectFields(window, false);
+		chatPanel.Cancel(gameClient);
+		stageOverScreen.Show(gameClient.GetStageResult());
+		chatPanel.Show(true);
+		SetFocus(window);
+		InvalidateRect(window, nullptr, FALSE);
+		break;
 	case NetEventResult::GameStarted:
 		if (!gameClient.StartRendering(window))
 		{
@@ -90,6 +101,7 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 			return false;
 		}
 		ShowConnectFields(window, false);
+		stageOverScreen.Hide();
 		chatPanel.Cancel(gameClient);
 		chatPanel.Show(true);
 		SetFocus(window);
@@ -242,8 +254,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmdPa
 		{
 			if (!joinAttempt.valid() && chatPanel.HandleMessage(Message, gameClient)) continue;
 			// OnKey sends gameplay input only in Playing; form navigation stays with the dialog.
-			if (!joinAttempt.valid() && GetFocus() == hWnd && (Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
+			const HWND focus = GetFocus();
+			const bool stageButton = focus == GetDlgItem(hWnd, StageOverScreen::NextButton) ||
+				focus == GetDlgItem(hWnd, StageOverScreen::LeaveButton);
+			if (!joinAttempt.valid() && (focus == hWnd || (gameClient.GetScene() == Scene::StageOver && stageButton)) &&
+				(Message.message == WM_KEYDOWN || Message.message == WM_KEYUP))
+			{
 				gameClient.OnKey(Message.message, Message.wParam);
+				if (gameClient.GetScene() == Scene::StageOver)
+				{
+					stageOverScreen.Update(gameClient.GetStageResult());
+					if (Message.wParam == 'Z' && gameClient.GetStageResult().ready) SetFocus(hWnd);
+				}
+			}
 			// Let the edit control and IME finish composition instead of dialog Enter navigation.
 			if (GetFocus() != GetDlgItem(hWnd, ChatPanel::Input) &&
 				(gameClient.GetScene() != Scene::Playing || gameClient.IsChatting()) && Message.message != WM_NET_EVENT &&
@@ -277,6 +300,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			StopOnline(hWnd);
 			connectScreen.Destroy(hWnd);
 			chatPanel.Destroy();
+			stageOverScreen.Destroy();
 		}
 		KillTimer(hWnd, 2);
 		KillTimer(hWnd, GameConst::FrameTimerId);
@@ -292,6 +316,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		case WM_CREATE:
 			if (!connectScreen.Create(hWnd, g_hInst)) return -1;
 			if (!chatPanel.Create(hWnd, g_hInst)) return -1;
+			if (!stageOverScreen.Create(hWnd, g_hInst)) return -1;
 			gameClient.SetWindow(hWnd);
 			return 0;
 		case WM_GETMINMAXINFO:
@@ -300,11 +325,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		case WM_SIZE:
 			connectScreen.Layout(hWnd);
 			chatPanel.Layout();
+			stageOverScreen.Layout();
 			return 0;
 		case WM_ERASEBKGND:
 			return TRUE;
 		case WM_PAINT:
-			if (gameClient.GetScene() == Scene::Playing)
+			if (gameClient.GetScene() == Scene::Playing || gameClient.GetScene() == Scene::StageOver)
 			{
 				PAINTSTRUCT paint{};
 				BeginPaint(hWnd, &paint);
@@ -325,7 +351,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 			}
 			return reinterpret_cast<LRESULT>(connectScreen.PaintLabel(reinterpret_cast<HDC>(wParam)));
 		case WM_DRAWITEM:
-			connectScreen.PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+			if (wParam == StageOverScreen::NextButton || wParam == StageOverScreen::LeaveButton)
+				stageOverScreen.PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+			else connectScreen.PaintButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
 			return TRUE;
 		case WM_SETFOCUS:
 			if (const HWND ipField = GetDlgItem(hWnd, ConnectScreen::ServerIp); IsWindowEnabled(ipField))
@@ -350,6 +378,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 		case WM_COMMAND:
 			if (chatPanel.HandleCommand(wParam, gameClient)) return 0;
 			if (HIWORD(wParam) != BN_CLICKED) return 0;
+			if (LOWORD(wParam) == StageOverScreen::NextButton && gameClient.GetScene() == Scene::StageOver)
+			{
+				gameClient.RequestNextStage();
+				stageOverScreen.Update(gameClient.GetStageResult());
+				SetFocus(hWnd);
+				return 0;
+			}
+			if (LOWORD(wParam) == StageOverScreen::LeaveButton && gameClient.GetScene() == Scene::StageOver)
+			{
+				StopOnline(hWnd);
+				EnableJoinFields(hWnd, true);
+				SetJoinStatus(hWnd, L"방에서 나왔습니다. 다시 접속할 수 있어요.");
+				SetFocus(GetDlgItem(hWnd, ConnectScreen::JoinButton));
+				return 0;
+			}
 			if ((LOWORD(wParam) == ConnectScreen::LeaveButton || LOWORD(wParam) == IDCANCEL) &&
 				gameClient.GetScene() == Scene::Waiting && !joinAttempt.valid())
 			{
@@ -368,6 +411,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT iMsg, WPARAM wParam, LPARAM lParam)
 				localGameStarted = true;
 				connectScreen.Destroy(hWnd);
 				chatPanel.Destroy();
+				stageOverScreen.Destroy();
 				SetFocus(hWnd);
 				InitializeGame(hWnd);
 				InvalidateRect(hWnd, nullptr, TRUE);

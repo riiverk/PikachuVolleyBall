@@ -67,6 +67,10 @@ void GameClient::Disconnect()
     network_.Disconnect();
     ChangeScene(Scene::Connect);
     scores_.fill(0);
+    playerIndex_ = NO_PLAYER;
+    stage_ = 0;
+    stageResult_ = {};
+    readyKeyDown_ = false;
     EndChat();
     chatHistory_.clear();
     nicknames_.fill({});
@@ -77,7 +81,8 @@ void GameClient::ChangeScene(Scene scene)
 {
     if (scene_ == scene) return;
 
-    if (scene != Scene::Playing) StopRendering();
+    readyKeyDown_ = scene == Scene::StageOver && (input_.GetKeys() & ACTION) != 0;
+    if (scene != Scene::Playing && scene != Scene::StageOver) StopRendering();
     ReleaseInput();
     EndChat();
     scene_ = scene;
@@ -85,7 +90,21 @@ void GameClient::ChangeScene(Scene scene)
 
 void GameClient::OnKey(UINT msg, WPARAM key)
 {
-    if (chatting_ || scene_ != Scene::Playing || !network_.IsConnected()) return;
+    if (chatting_ || !network_.IsConnected()) return;
+    if (scene_ == Scene::StageOver)
+    {
+        if (key == 'Z')
+        {
+            if (msg == WM_KEYUP) readyKeyDown_ = false;
+            else if (msg == WM_KEYDOWN && !readyKeyDown_)
+            {
+                readyKeyDown_ = true;
+                RequestNextStage();
+            }
+        }
+        return;
+    }
+    if (scene_ != Scene::Playing) return;
 
     bool changed = false;
     switch (msg)
@@ -94,6 +113,15 @@ void GameClient::OnKey(UINT msg, WPARAM key)
     case WM_KEYUP: changed = input_.OnKeyUp(key); break;
     }
     if (changed) network_.SendInput(input_.GetKeys());
+}
+
+bool GameClient::RequestNextStage()
+{
+    if (scene_ != Scene::StageOver || chatting_ || !stageResult_.CanContinue() || stageResult_.ready || !network_.IsConnected())
+        return false;
+    if (!network_.SendNextStage()) return false;
+    stageResult_.ready = true;
+    return true;
 }
 
 void GameClient::ReleaseInput()
@@ -107,6 +135,7 @@ bool GameClient::BeginChat()
 {
     if (scene_ == Scene::Connect || !network_.IsConnected()) return false;
     ReleaseInput();
+    readyKeyDown_ = false;
     chatting_ = true;
     return true;
 }
@@ -149,6 +178,7 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         case JoinResult::Waiting:
         case JoinResult::Matched:
             if (reply.myIndex >= GameConst::PlayerCount) break;
+            playerIndex_ = reply.myIndex;
             if (scene_ == Scene::Connect)
             {
                 chatHistory_.clear();
@@ -172,7 +202,10 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         std::memcpy(&start, data, sizeof(start));
         if (start.stage == 0 || start.stage > GameConst::StageCount || start.serveSide >= GameConst::PlayerCount)
             break;
+        if (scene_ == Scene::StageOver && (start.stage != stage_ + 1 || stageResult_.ended)) break;
         scores_.fill(0);
+        stage_ = start.stage;
+        stageResult_ = {};
         for (int i = 0; i < GameConst::PlayerCount; ++i)
         {
             std::wstring nickname;
@@ -180,6 +213,35 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         }
         ChangeScene(Scene::Playing);
         return NetEventResult::GameStarted;
+    }
+    case static_cast<WPARAM>(PacketType::STAGE_OVER):
+    {
+        if (scene_ != Scene::Playing) break;
+        StageOverPacket result;
+        std::memcpy(&result, data, sizeof(result));
+        if (result.stage != stage_ || result.winner >= GameConst::PlayerCount) break;
+        stageResult_ = {result.stage, result.winner, playerIndex_, scores_, nicknames_};
+        network_.GetLatestState(stageState_);
+        stageState_.phase = Phase::StageOver;
+        for (int i = 0; i < GameConst::PlayerCount; ++i)
+        {
+            stageState_.p[i].x = GameConst::PlayerStartX[i];
+            stageState_.p[i].y = GameConst::PlayerGroundY;
+            stageState_.p[i].action = i == result.winner ? Action::Win : Action::Lose;
+        }
+        ChangeScene(Scene::StageOver);
+        return NetEventResult::StageEnded;
+    }
+    case static_cast<WPARAM>(PacketType::GAME_OVER):
+    {
+        // Keep stage readiness safe if the peer leaves. The final result scene is separate.
+        if (scene_ != Scene::StageOver) break;
+        GameOverPacket result;
+        std::memcpy(&result, data, sizeof(result));
+        if (result.reason != GameOverReason::Quit || result.winner >= GameConst::PlayerCount) break;
+        stageResult_.ended = true;
+        stageResult_.ready = false;
+        return NetEventResult::StageEnded;
     }
     case static_cast<WPARAM>(PacketType::SCORE):
     {
@@ -236,9 +298,10 @@ void GameClient::StopRendering()
 
 bool GameClient::OnTimer()
 {
-    if (!renderWindow_ || scene_ != Scene::Playing || !network_.IsConnected()) return false;
+    if (!renderWindow_ || (scene_ != Scene::Playing && scene_ != Scene::StageOver) || !network_.IsConnected()) return false;
     GameStatePacket state;
-    if (!network_.GetLatestState(state)) return false;
+    if (scene_ == Scene::StageOver) state = stageState_;
+    else if (!network_.GetLatestState(state)) return false;
 
     if (state.phase == Phase::StageOver || state.phase == Phase::GameOver)
     {
@@ -261,6 +324,6 @@ bool GameClient::OnTimer()
         }
     }
     renderedPhase_ = state.phase;
-    renderer_.Render(state, scores_, GameConst::ChatPanelHeight);
+    renderer_.Render(state, scores_, GameConst::ChatPanelHeight, scene_ == Scene::StageOver ? &stageResult_ : nullptr);
     return true;
 }

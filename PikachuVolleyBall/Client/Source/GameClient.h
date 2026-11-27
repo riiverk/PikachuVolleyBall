@@ -2,13 +2,14 @@
 #include "NetworkClient.h"
 #include "InputManager.h"
 #include "Renderer.h"
+#include "StageOverScreen.h"
 #include <array>
 #include <deque>
 #include <string>
 
 enum class Scene { Connect, Waiting, Playing, StageOver, Result };
 enum class JoinRequestResult { Sent, InvalidAddress, InvalidRoom, InvalidNickname, ConnectionFailed, SendFailed };
-enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, GameStarted, ScoreUpdated, ChatReceived };
+enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, GameStarted, ScoreUpdated, ChatReceived, StageEnded };
 enum class ChatSendResult { Sent, Empty, TooLong, InvalidText, NotInRoom, SendFailed };
 
 class GameClient
@@ -23,6 +24,8 @@ public:
     void ChangeScene(Scene scene);
     // Only Playing forwards movement/action keys; other scenes keep their UI input.
     void OnKey(UINT msg, WPARAM key);
+    bool RequestNextStage();
+    const StageResult& GetStageResult() const { return stageResult_; }
     void ReleaseInput();
     bool BeginChat();
     void EndChat() { chatting_ = false; }
@@ -43,6 +46,10 @@ private:
     Renderer renderer_;
     std::array<std::uint8_t, GameConst::PlayerCount> scores_{};
     HWND renderWindow_ = nullptr;
+    std::uint8_t playerIndex_ = NO_PLAYER, stage_ = 0;
+    StageResult stageResult_;
+    GameStatePacket stageState_{};
+    bool readyKeyDown_ = false;
     Phase renderedPhase_ = Phase::Ready;
     ULONGLONG resultStartedAt_ = 0;
     bool chatting_ = false;
