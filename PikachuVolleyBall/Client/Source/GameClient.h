@@ -9,7 +9,7 @@
 
 enum class Scene { Connect, Waiting, Playing, StageOver, Result };
 enum class JoinRequestResult { Sent, InvalidAddress, InvalidRoom, InvalidNickname, ConnectionFailed, SendFailed };
-enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, GameStarted, ScoreUpdated, ChatReceived, StageEnded };
+enum class NetEventResult { Ignored, Waiting, Matched, RoomFull, JoinRejected, GameStarted, ScoreUpdated, ChatReceived, StageEnded, EffectPlayed };
 enum class ChatSendResult { Sent, Empty, TooLong, InvalidText, NotInRoom, SendFailed };
 
 class GameClient
@@ -40,6 +40,9 @@ public:
     Scene GetScene() const { return scene_; }
 private:
     friend struct GameClientTestAccess;
+    bool PlayEffect(EventKind kind);
+    void CloseEffects();
+
     Scene scene_ = Scene::Connect;
     NetworkClient network_;
     InputManager input_;
@@ -56,4 +59,5 @@ private:
     std::wstring joinedNickname_;
     std::array<std::wstring, GameConst::PlayerCount> nicknames_;
     std::deque<std::wstring> chatHistory_;
+    std::array<UINT, 5> effectDevices_{};
 };

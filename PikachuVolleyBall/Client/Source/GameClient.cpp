@@ -3,6 +3,9 @@
 #include <cstring>
 #include <limits>
 #include <cwctype>
+#include <mmsystem.h>
+
+#pragma comment(lib, "winmm.lib")
 
 namespace
 {
@@ -20,6 +23,7 @@ bool DecodeText(const char* text, int capacity, std::wstring& out)
 
 GameClient::~GameClient()
 {
+    CloseEffects();
     StopRendering();
 }
 
@@ -82,7 +86,11 @@ void GameClient::ChangeScene(Scene scene)
     if (scene_ == scene) return;
 
     readyKeyDown_ = scene == Scene::StageOver && (input_.GetKeys() & ACTION) != 0;
-    if (scene != Scene::Playing && scene != Scene::StageOver) StopRendering();
+    if (scene != Scene::Playing && scene != Scene::StageOver)
+    {
+        CloseEffects();
+        StopRendering();
+    }
     ReleaseInput();
     EndChat();
     scene_ = scene;
@@ -243,6 +251,15 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
         stageResult_.ready = false;
         return NetEventResult::StageEnded;
     }
+    case static_cast<WPARAM>(PacketType::EVENT):
+    {
+        if (scene_ != Scene::Playing || !network_.IsConnected()) break;
+        EventPacket event;
+        std::memcpy(&event, data, sizeof(event));
+        if (event.who < GameConst::PlayerCount && PlayEffect(event.kind))
+            return NetEventResult::EffectPlayed;
+        break;
+    }
     case static_cast<WPARAM>(PacketType::SCORE):
     {
         if (scene_ != Scene::Playing) break;
@@ -274,6 +291,50 @@ NetEventResult GameClient::OnNetEvent(WPARAM type, LPARAM pkt)
     }
     return NetEventResult::Ignored;
 }
+
+bool GameClient::PlayEffect(EventKind kind)
+{
+    // One waveform device per effect lets different sounds play at the same time.
+    constexpr std::array files{
+        L"Resources\\sounds\\WAVE142_1.wav", // Jump
+        L"Resources\\sounds\\WAVE145_1.wav", // Slide
+        L"Resources\\sounds\\WAVE141_1.wav", // Spike
+        L"Resources\\sounds\\WAVE146_1.wav", // Hit
+        L"Resources\\sounds\\WAVE143_1.wav"  // Score
+    };
+    const auto index = static_cast<std::size_t>(kind);
+    if (index >= files.size()) return false;
+
+    auto& device = effectDevices_[index];
+    if (device == 0)
+    {
+        MCI_WAVE_OPEN_PARMSW open{};
+        open.lpstrDeviceType = L"waveaudio";
+        open.lpstrElementName = files[index];
+        if (mciSendCommandW(0, MCI_OPEN, MCI_OPEN_TYPE | MCI_OPEN_ELEMENT | MCI_WAIT,
+            reinterpret_cast<DWORD_PTR>(&open)) != 0)
+            return false;
+        device = open.wDeviceID;
+    }
+
+    MCI_PLAY_PARMS play{};
+    if (mciSendCommandW(device, MCI_PLAY, MCI_FROM, reinterpret_cast<DWORD_PTR>(&play)) == 0)
+        return true;
+    mciSendCommandW(device, MCI_CLOSE, MCI_WAIT, 0);
+    device = 0;
+    return false;
+}
+
+void GameClient::CloseEffects()
+{
+    for (auto& device : effectDevices_)
+    {
+        if (device == 0) continue;
+        mciSendCommandW(device, MCI_CLOSE, MCI_WAIT, 0);
+        device = 0;
+    }
+}
+
 bool GameClient::StartRendering(HWND window)
 {
     if (scene_ != Scene::Playing || !network_.IsConnected() || !IsWindow(window)) return false;

@@ -8,6 +8,7 @@
 #include "../../Client/Source/GameClient.h"
 #include "../../Client/Source/ChatPanel.h"
 #include "../../Client/Source/ConnectScreen.h"
+#include <mmsystem.h>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -62,6 +63,7 @@ struct RendererTestAccess
 struct GameClientTestAccess
 {
     static auto Scores(const GameClient& client) { return client.scores_; }
+    static auto EffectDevices(const GameClient& client) { return client.effectDevices_; }
 
     static COLORREF Pixel(const GameClient& client, int x, int y)
     {
@@ -2177,6 +2179,69 @@ struct HiddenChatPlayer
     }
 };
 
+void GameClientSoundTest()
+{
+    HiddenChatPlayer player;
+    Listener listener;
+    Check(player.client.ConnectAndJoin(L"127.0.0.1", L"28", L"sound", listener.port) == JoinRequestResult::Sent,
+        "join through the real network client before receiving audio events");
+    Socket peer;
+    peer.value = listener.Accept();
+    const auto send = [&](const auto& packet) {
+        SendBytes(peer.value, reinterpret_cast<const char*>(&packet), sizeof(packet));
+    };
+    const auto sendEffect = [&](EventKind kind, std::uint8_t who) {
+        EventPacket event;
+        event.kind = kind;
+        event.who = who;
+        send(event);
+        return player.Receive(PacketType::EVENT);
+    };
+
+    JoinResultPacket reply;
+    reply.result = JoinResult::Matched;
+    reply.myIndex = 0;
+    send(reply);
+    Check(player.Receive(PacketType::JOIN_RESULT) == NetEventResult::Matched, "enter the waiting room");
+    Check(sendEffect(EventKind::Jump, 0) == NetEventResult::Ignored, "waiting rooms ignore match sounds");
+    send(GameStartPacket{});
+    Check(player.Receive(PacketType::GAME_START) == NetEventResult::GameStarted, "enter the online match");
+    Check(sendEffect(static_cast<EventKind>(255), 0) == NetEventResult::Ignored &&
+        sendEffect(EventKind::Hit, NO_PLAYER) == NetEventResult::Ignored, "invalid event IDs and players do not play audio");
+
+    Check(sendEffect(EventKind::Jump, 0) == NetEventResult::EffectPlayed &&
+        sendEffect(EventKind::Spike, 1) == NetEventResult::EffectPlayed, "play jump and spike WAVs for both players");
+    const auto devices = GameClientTestAccess::EffectDevices(player.client);
+    const auto isPlaying = [](UINT device) {
+        MCI_STATUS_PARMS status{};
+        status.dwItem = MCI_STATUS_MODE;
+        return device != 0 && mciSendCommandW(device, MCI_STATUS, MCI_STATUS_ITEM | MCI_WAIT,
+            reinterpret_cast<DWORD_PTR>(&status)) == 0 && status.dwReturn == MCI_MODE_PLAY;
+    };
+    Check(isPlaying(devices[0]) && isPlaying(devices[2]), "jump and spike are both playing on separate devices");
+    Check(sendEffect(EventKind::Hit, 0) == NetEventResult::EffectPlayed &&
+        sendEffect(EventKind::Slide, 1) == NetEventResult::EffectPlayed &&
+        sendEffect(EventKind::Score, 0) == NetEventResult::EffectPlayed, "play the remaining three event WAVs");
+    Check(sendEffect(EventKind::Jump, 1) == NetEventResult::EffectPlayed &&
+        GameClientTestAccess::EffectDevices(player.client)[0] == devices[0], "repeated events reuse the open clip");
+
+    StageOverPacket ended;
+    ended.winner = 0;
+    send(ended);
+    Check(player.Receive(PacketType::STAGE_OVER) == NetEventResult::StageEnded &&
+        sendEffect(EventKind::Hit, 0) == NetEventResult::Ignored, "ignore match sounds during the stage result");
+    const auto openDevices = GameClientTestAccess::EffectDevices(player.client);
+    player.client.Disconnect();
+    for (const UINT device : openDevices)
+    {
+        MCI_STATUS_PARMS status{};
+        status.dwItem = MCI_STATUS_MODE;
+        Check(device != 0 && mciSendCommandW(device, MCI_STATUS, MCI_STATUS_ITEM | MCI_WAIT,
+            reinterpret_cast<DWORD_PTR>(&status)) == MCIERR_INVALID_DEVICE_ID, "leaving closes all five audio devices");
+    }
+    std::cout << "PASS: TCP event audio, simultaneous playback, repeated effects and cleanup\n";
+}
+
 void ChatPanelLayoutTest()
 {
     HiddenChatPlayer player;
@@ -3489,9 +3554,23 @@ void LinkScaffolds()
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     std::cout << std::unitbuf;
+    if (argc == 2 && std::strcmp(argv[1], "--audio-check") == 0)
+    {
+        WSADATA data{};
+        if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return 1;
+        int code = 0;
+        try { GameClientSoundTest(); }
+        catch (const std::exception& error)
+        {
+            std::cerr << "FAIL: " << error.what() << '\n';
+            code = 1;
+        }
+        WSACleanup();
+        return code;
+    }
     try
     {
         GameWorldScoreTest();

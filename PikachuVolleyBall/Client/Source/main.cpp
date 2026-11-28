@@ -117,6 +117,7 @@ bool HandleNetEvent(HWND window, const NetEvent& event)
 		SetFocus(GetDlgItem(window, ConnectScreen::RoomNumber));
 		return false;
 	case NetEventResult::Ignored:
+	case NetEventResult::EffectPlayed:
 		break;
 	}
 	return true;
